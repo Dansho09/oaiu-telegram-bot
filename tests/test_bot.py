@@ -340,6 +340,7 @@ class ProtocolTests(unittest.TestCase):
             request_json("https://example.com", "Groq")
         self.assertEqual(caught.exception.retry_after, 5)
         self.assertEqual(caught.exception.limit_kind, "minute")
+        self.assertTrue(body.closed)
 
     def test_chunking_keeps_emoji_and_full_text_under_utf16_limit(self):
         text = "Привет, OAIU! 🎓\n" * 1000
@@ -372,6 +373,7 @@ class ProtocolTests(unittest.TestCase):
             request_json("https://example.com/SECRET", "Telegram")
         self.assertEqual(caught.exception.retry_after, 7)
         self.assertNotIn("SECRET", str(caught.exception))
+        self.assertTrue(body.closed)
 
 
 if __name__ == "__main__":
