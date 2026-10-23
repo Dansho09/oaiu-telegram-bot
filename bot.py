@@ -18,11 +18,15 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import weakref
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 LOG = logging.getLogger("oaiu")
+_TLS_CONTEXT = None
+_TLS_LOCK = threading.Lock()
 FORMATS = {"speech": "🎤 Речь", "script": "🎭 Сценарий", "announcement": "📣 Анонс", "post": "📱 Пост", "thanks": "💐 Благодарность", "kit": "📦 Всё для события"}
 LANGUAGES = {"ru": "Русский", "kk": "Қазақша", "en": "English"}
 TONES = {"warm": "Тёплый", "formal": "Торжественный", "inspiring": "Вдохновляющий", "business": "Деловой"}
@@ -91,11 +95,16 @@ class Config:
 
 
 def tls_context():
-    # python.org macOS installers may not have a configured CA bundle.
-    paths = ssl.get_default_verify_paths()
-    if not paths.cafile and not paths.capath and Path("/etc/ssl/cert.pem").is_file():
-        return ssl.create_default_context(cafile="/etc/ssl/cert.pem")
-    return ssl.create_default_context()
+    # A verified context can be shared between connections and threads. Loading
+    # the CA store for every poll/message needlessly multiplies OpenSSL memory.
+    global _TLS_CONTEXT
+    with _TLS_LOCK:
+        if _TLS_CONTEXT is None:
+            # python.org macOS installers may not have a configured CA bundle.
+            paths = ssl.get_default_verify_paths()
+            cafile = "/etc/ssl/cert.pem" if not paths.cafile and not paths.capath and Path("/etc/ssl/cert.pem").is_file() else None
+            _TLS_CONTEXT = ssl.create_default_context(cafile=cafile)
+        return _TLS_CONTEXT
 
 
 def request_json(url: str, service: str, payload=None, headers=None, timeout=70):
@@ -118,6 +127,7 @@ def request_json(url: str, service: str, payload=None, headers=None, timeout=70)
             retry = re.search(r"try again in\s+([\d.hms ]+)", description)
             if retry:
                 seconds = max(seconds, parse_delay(retry.group(1).rstrip(". ")))
+        error.close()
         raise ServiceError(service, error.code, seconds, limit_kind) from None
     except (urllib.error.URLError, TimeoutError, OSError, ValueError):
         raise ServiceError(service) from None
@@ -157,6 +167,7 @@ class Telegram:
                 if not result.get("ok"):
                     raise ServiceError("Telegram", result.get("error_code", 0))
             except urllib.error.HTTPError as error:
+                error.close()
                 raise ServiceError("Telegram", error.code) from None
             except (urllib.error.URLError, TimeoutError, OSError, ValueError):
                 raise ServiceError("Telegram") from None
@@ -427,7 +438,9 @@ def brief_prompt(session):
 class Bot:
     def __init__(self, config, api, store, generator):
         self.config, self.api, self.store, self.generator = config, api, store, generator
-        self.locks = {}
+        # Active handlers keep their lock alive, including while waiting.
+        # Completed chats must not leave one permanent object per visitor.
+        self.locks = weakref.WeakValueDictionary()
         self.capacity = asyncio.Semaphore(1)
         self.workers = {}
         self.sleep = asyncio.sleep
@@ -720,6 +733,9 @@ class Bot:
 
 
 async def run(config):
+    # One long poll, one AI request and two message/upload workers fit the
+    # small host. Bursts wait instead of creating up to 32 network threads.
+    asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=4, thread_name_prefix="oaiu-http"))
     api = Telegram(config.token)
     me = await api.acall("getMe")
     webhook = await api.acall("getWebhookInfo")
