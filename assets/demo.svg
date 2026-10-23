@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+<rect width="1280" height="720" rx="24" fill="#eef3f7"/>
+<g font-family="Arial, DejaVu Sans, sans-serif">
+<text x="40" y="49" font-size="13" letter-spacing="2" font-weight="700" fill="#24786c">ОТ ИДЕИ ДО ГОТОВОГО ТЕКСТА</text>
+<text x="40" y="87" font-size="30" font-weight="700" fill="#183349">Один чат. Всё для события.</text>
+<text x="1240" y="83" text-anchor="end" font-size="12" fill="#718794">Демонстрационный диалог</text>
+<rect x="32" y="119" width="384" height="560" rx="20" fill="#101e2b"/><rect x="448" y="119" width="384" height="560" rx="20" fill="#101e2b"/><rect x="864" y="119" width="384" height="560" rx="20" fill="#101e2b"/>
+<circle cx="62" cy="150" r="12" fill="#0c9f88"/><text x="62" y="154" font-size="11" text-anchor="middle" fill="white" font-weight="700">1</text><text x="84" y="155" font-size="14" fill="#f3f6f8" font-weight="700">Выберите формат</text>
+<circle cx="478" cy="150" r="12" fill="#0c9f88"/><text x="478" y="154" font-size="11" text-anchor="middle" fill="white" font-weight="700">2</text><text x="500" y="155" font-size="14" fill="#f3f6f8" font-weight="700">Расскажите о событии</text>
+<circle cx="894" cy="150" r="12" fill="#0c9f88"/><text x="894" y="154" font-size="11" text-anchor="middle" fill="white" font-weight="700">3</text><text x="916" y="155" font-size="14" fill="#f3f6f8" font-weight="700">Получите и доработайте</text>
+<path d="M32 176h384M448 176h384M864 176h384" stroke="#2a3b49"/>
+<rect x="50" y="196" width="348" height="151" rx="13" fill="#203343"/><text x="67" y="226" font-size="16" fill="#f2f6f8" font-weight="700">OAIU Помощник</text><text x="67" y="256" font-size="15" fill="#e5edf3">Привет! Подготовлю текст для</text><text x="67" y="279" font-size="15" fill="#e5edf3">университетского события.</text><text x="67" y="320" font-size="15" fill="#f2f6f8">Что создадим?</text>
+<g fill="#253e52"><rect x="50" y="356" width="169" height="46" rx="8"/><rect x="229" y="356" width="169" height="46" rx="8"/><rect x="50" y="411" width="169" height="46" rx="8"/><rect x="229" y="411" width="169" height="46" rx="8"/><rect x="50" y="466" width="169" height="46" rx="8"/><rect x="229" y="466" width="169" height="46" rx="8"/></g>
+<g fill="#e8f3f9" font-size="14" text-anchor="middle"><text x="134" y="384">Речь</text><text x="313" y="384">Сценарий</text><text x="134" y="439">Анонс</text><text x="313" y="439">Пост</text><text x="134" y="494">Благодарность</text><text x="313" y="494">Всё для события</text></g>
+<text x="67" y="560" font-size="13" fill="#8ca5b8">Дальше — язык, объём и настроение.</text>
+<rect x="466" y="196" width="348" height="49" rx="12" fill="#203343"/><text x="483" y="226" font-size="14" fill="#e5edf3">Русский · 3 минуты · Тёплый тон</text>
+<rect x="485" y="260" width="329" height="198" rx="13" fill="#205778"/><text x="502" y="289" font-size="15" fill="#f2f6f8">Посвящение в студенты OAIU.</text><text x="502" y="316" font-size="15" fill="#f2f6f8">Выступает преподаватель.</text><text x="502" y="357" font-size="15" fill="#f2f6f8">Поздравить первокурсников,</text><text x="502" y="382" font-size="15" fill="#f2f6f8">пожелать смелости и новых</text><text x="502" y="407" font-size="15" fill="#f2f6f8">знакомств. Без лишнего</text><text x="502" y="432" font-size="15" fill="#f2f6f8">официоза.</text>
+<rect x="466" y="476" width="211" height="50" rx="13" fill="#203343"/><circle cx="486" cy="501" r="4" fill="#30c4a7"/><text x="501" y="507" font-size="15" fill="#e5edf3">Готовлю текст…</text>
+<text x="483" y="568" font-size="13" fill="#8ca5b8">Лимит сервиса? Бот сам подождёт.</text>
+<rect x="882" y="196" width="348" height="258" rx="13" fill="#203343"/><text x="899" y="226" font-size="16" fill="#f2f6f8" font-weight="700">Дорогие первокурсники!</text>
+<text x="899" y="261" font-size="14" fill="#e5edf3">Сегодня начинается новая глава</text><text x="899" y="284" font-size="14" fill="#e5edf3">вашей жизни. Пусть университет</text><text x="899" y="307" font-size="14" fill="#e5edf3">станет местом первых открытий,</text><text x="899" y="330" font-size="14" fill="#e5edf3">смелых идей и крепкой дружбы.</text>
+<text x="899" y="369" font-size="14" fill="#e5edf3">Задавайте вопросы, пробуйте</text><text x="899" y="392" font-size="14" fill="#e5edf3">новое и поддерживайте друг друга.</text><text x="899" y="428" font-size="14" fill="#e5edf3">Добро пожаловать в OAIU!</text>
+<g fill="#253e52"><rect x="882" y="463" width="169" height="39" rx="7"/><rect x="1061" y="463" width="169" height="39" rx="7"/><rect x="882" y="510" width="348" height="39" rx="7"/><rect x="882" y="557" width="169" height="39" rx="7"/><rect x="1061" y="557" width="169" height="39" rx="7"/><rect x="882" y="604" width="348" height="39" rx="7"/></g>
+<g fill="#e8f3f9" font-size="13" text-anchor="middle"><text x="966" y="488">Короче</text><text x="1145" y="488">Торжественнее</text><text x="1056" y="535">Добавить благодарность</text><text x="966" y="582">Менее официально</text><text x="1145" y="582">Своя правка</text><text x="1056" y="629">Русский  ·  Қазақша  ·  English</text></g>
+</g></svg>
