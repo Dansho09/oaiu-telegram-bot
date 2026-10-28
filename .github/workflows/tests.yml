@@ -39,5 +39,13 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: Test webhook, SQLite history, queue and migration without keys
-        run: node --test cloudflare/test/*.test.js
+      - uses: pnpm/action-setup@v6
+        with:
+          version: '11.25.0'
+          run_install: false
+      - name: Install locked Cloudflare dependencies
+        working-directory: cloudflare
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test dialogue, exports, program, imports and permissions without keys
+        working-directory: cloudflare
+        run: pnpm test
