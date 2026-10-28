@@ -76,6 +76,10 @@ test('removing a selected rector does not leave him in the factual prompt', () =
   assert.deepEqual(f.store.job(50).session.people, []); assert.equal(peopleFacts(f.store.job(50).session), '');
 });
 test('full volleyball wizard stores duration, clock, hosts, direction and rector', () => {
+  const typed = fixture(); typed.dialogue.accept(message('Ертең 2 сағаттық волейбол сценарийі керек. Басталуы 14:00. Ректор құттықтасын.'));
+  for (const text of ['Жалғастыру', 'Жылы', 'Дайын']) typed.dialogue.accept(message(text));
+  assert.ok(typed.store.job(50)); assert.equal(typed.store.job(50).session.event_start, 840); assert.deepEqual(typed.store.job(50).session.people, ['rector']);
+
   const f = fixture();
   for (const data of ['type:script', 'language:kk', 'event:profile:volleyball', 'event:duration:120', 'event:start']) f.dialogue.accept(click(data));
   f.dialogue.accept(message('14:30')); f.dialogue.accept(click('event:hosts:1')); f.dialogue.accept(click('event:stage:left_right')); f.dialogue.accept(click('event:ready')); f.dialogue.accept(click('tone:formal')); f.dialogue.accept(click('person:rector')); f.dialogue.accept(click('staff:done')); f.dialogue.accept(message('Ертең университетте волейбол жарысы болады.'));
@@ -117,6 +121,8 @@ test('sports hall mode does not impose a raised stage or auditorium entrance', (
   const text = scenarioPrompt({ ...script, stage_key: 'gym' }); assert.match(text, /Сахнасыз спортзал/); assert.match(text, /Не требуй сцены/); assert.ok(!text.includes('Көрерменге қатысты: оң жақтан'));
 });
 test('natural language scenario requests can prefill event and duration', () => {
+  const timed = fixture(); timed.dialogue.accept(message('Ертең 2 сағаттық волейбол сценарийі керек. Басталуы 14:00. Оң жақтан шығып, сол жақтан түседі.'));
+  assert.equal(timed.store.get(50).event_start, 840); assert.equal(timed.store.get(50).stage_note, 'Оң жақтан шығып, сол жақтан түседі.');
   const f = fixture(); f.dialogue.accept(message('Ертең волейбол жарысы болады, 2 сағаттық сценарий керек.'));
   const session = f.store.get(50); assert.equal(session.format, 'script'); assert.equal(session.language, 'kk'); assert.equal(session.event_minutes, 120); assert.equal(session.event_preset, 'volleyball'); assert.equal(session.step, 'event_settings');
 });
