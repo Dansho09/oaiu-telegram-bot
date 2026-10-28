@@ -13,6 +13,8 @@ function backup(tables = {}) { return { version: 1, tables: { sessions: [], draf
 function texts(f) { return f.store.rows("SELECT payload FROM outbox WHERE kind='message' ORDER BY id").map(r => JSON.parse(r.payload).text); }
 
 test('Telegram chunks respect UTF-16 and keep emoji intact', () => {
+  const paragraphs = 'Первый абзац. '.repeat(150) + '\n\n' + 'Следующий абзац. '.repeat(150);
+  const readable = splitText(paragraphs); assert.equal(readable.join(''), paragraphs); assert.ok(readable[0].endsWith('\n\n'));
   const text = 'а'.repeat(3599) + '🙂'.repeat(4) + 'Қазақша';
   const chunks = splitText(text); assert.equal(chunks.join(''), text); assert.ok(chunks.every(c => c.length <= 3600)); assert.ok(chunks.every(c => !/[\uD800-\uDBFF]$/.test(c)));
 });

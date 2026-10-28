@@ -70,7 +70,9 @@ test('owner commands use setMyCommands with a private chat scope', async () => {
   assert.equal(f.sent[0].method, 'setMyCommands'); assert.deepEqual(f.sent[0].payload.scope, { type: 'chat', chat_id: 70 });
 });
 test('structured script renders exact times, localized roles, stage routes and selected FIO', () => {
-  const result = renderStructuredScenario(script, blocks(script));
+  const generated = blocks(script); generated.blocks[7].lines.host_2 = 'Жеңімпаздарға медальдер мен кубоктар табыстайды.';
+  const result = renderStructuredScenario(script, generated);
+  assert.ok(!result.includes('медальдер')); assert.match(result, /келісілген марапаттарды/);
   assert.match(result, /120 минут/); assert.match(result, /14:00/); assert.match(result, /16:00/);
   assert.match(result, /Жүргізуші 2:/); assert.ok(!result.includes('Ведущий')); assert.match(result, /Ажидинов Акмалдин Сапардинұлы/);
   assert.match(result, /оң жақ/); assert.match(result, /сол жақ/); assert.match(result, /Б ЖОСПАРЫ/);
