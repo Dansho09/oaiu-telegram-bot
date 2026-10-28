@@ -66,8 +66,8 @@ export const RESULT_BUTTONS = [
       "callback_data": "again:yes"
     },
     {
-      "text": "📄 Скачать TXT",
-      "callback_data": "export:txt"
+      "text": "📄 Скачать Word / PDF / TXT",
+      "callback_data": "export:menu"
     }
   ],
   [

@@ -1,17 +1,21 @@
 import { catalog, choose } from './directory.js';
+import { handleImport, clearImport } from './imports.js';
 
 export const PUBLIC_COMMANDS = [
-  ['start', 'Начать работу'], ['new', 'Создать новый текст'], ['people', 'Руководство и кафедры'], ['history', 'Последние черновики'], ['help', 'Как пользоваться'], ['privacy', 'Обработка данных'], ['delete', 'Удалить мои тексты'], ['cancel', 'Отменить текущую задачу'],
+  ['start', 'Жұмысты бастау'], ['new', 'Жаңа мәтін жасау'], ['people', 'Басшылық пен кафедралар'], ['history', 'Соңғы нобайлар'], ['word', 'Word жүктеп алу'], ['pdf', 'PDF жүктеп алу'], ['program', 'Бағдарламаны құрастыру'], ['sheets', 'Ұйымдастырушыларға арналған парақтар'], ['check', 'Іс-шара алдындағы тексеріс'], ['help', 'Қолдану нұсқаулығы'], ['privacy', 'Деректерді өңдеу'], ['delete', 'Мәтіндерімді жою'], ['cancel', 'Ағымдағы тапсырмадан бас тарту'],
 ].map(([command, description]) => ({ command, description }));
 
 export function ownerIdentity(store, env, chat, sender, claim = false) {
   if (!sender || sender.is_bot || !Number.isSafeInteger(sender.id) || sender.id !== chat) return false;
   const bound = store.meta('admin_owner_id');
-  if (bound !== null) return bound === sender.id;
+  if (bound !== null) {
+    if (bound === sender.id && claim) store.effect(chat, 'commands', { scope: { type: 'chat', chat_id: chat }, commands: [...PUBLIC_COMMANDS, { command: 'admin', description: 'Жеке басқару панелі' }] });
+    return bound === sender.id;
+  }
   const expected = String(env.BOT_OWNER_USERNAME || '').replace(/^@/, '').toLowerCase();
   if (!claim || !expected || String(sender.username || '').toLowerCase() !== expected) return false;
   store.setMeta('admin_owner_id', sender.id);
-  store.effect(chat, 'commands', { scope: { type: 'chat', chat_id: chat }, commands: [...PUBLIC_COMMANDS, { command: 'admin', description: 'Моя админ-панель' }] });
+  store.effect(chat, 'commands', { scope: { type: 'chat', chat_id: chat }, commands: [...PUBLIC_COMMANDS, { command: 'admin', description: 'Менің басқару панелім' }] });
   return true;
 }
 
@@ -21,19 +25,21 @@ export function showAdmin(store, chat, session) {
     [{ text: '🎓 Ректор / проректоры', callback_data: 'admin:list:leadership' }],
     [{ text: '🏛 Деканы', callback_data: 'admin:list:deans' }, { text: '📚 Кафедры', callback_data: 'admin:list:departments' }],
     [{ text: '➕ Добавить в справочник', callback_data: 'admin:add' }],
+    [{ text: '📤 Справочник из Word', callback_data: 'admin:import:directory' }, { text: '📚 Образцы сценариев', callback_data: 'admin:samples' }],
     [{ text: '↩️ Отменить последнее изменение', callback_data: 'admin:undo' }],
     [{ text: '⬅️ Вернуться к боту', callback_data: 'admin:close' }],
   ]);
 }
 const validPerson = parts => parts.length === 2 && parts.every(Boolean) && [...parts[0]].length <= 120 && [...parts[1]].length <= 200 && !/[@\d\n]/u.test(parts[0]) && !/[@\n]|https?:|\+?\d[\d ()-]{6,}/iu.test(parts[1]);
-function restoreStep(session) { const next = { ...session, step: session.admin_return_step || 'type' }; for (const key of ['admin_return_step', 'admin_person', 'admin_group']) delete next[key]; return next; }
+function restoreStep(session) { const next = { ...clearImport(session), step: session.admin_return_step || 'type' }; for (const key of ['admin_return_step', 'admin_person', 'admin_group']) delete next[key]; return next; }
 
-export function handleAdmin(dialogue, chat, text, callback, command, owner) {
+export function handleAdmin(dialogue, chat, text, callback, command, owner, document = null) {
   const store = dialogue.store, session = store.get(chat);
-  if (command !== '/admin' && !callback.startsWith('admin:') && !(session.step?.startsWith('admin_') && !command && !callback)) return false;
+  if (!document && command !== '/admin' && !callback.startsWith('admin:') && !(session.step?.startsWith('admin_') && !command && !callback)) return false;
   if (!owner) { store.send(chat, choose(session, 'Команда недоступна.', 'Бұл команда қолжетімсіз.', 'Command unavailable.')); return true; }
   const [action, value, pageRaw] = callback.slice(6).split(':');
-  if (command === '/admin' || action === 'open') { showAdmin(store, chat, session); return true; }
+  if (command === '/admin' || action === 'open') { if (session.step?.startsWith('admin_import_')) store.put(chat, restoreStep(session)); showAdmin(store, chat, store.get(chat)); return true; }
+  if (handleImport(dialogue, chat, text, callback, document)) return true;
   if (action === 'stats') {
     const counts = store.counts(), pause = Math.max(0, Math.ceil((store.pauseUntil() - Date.now()) / 1000));
     store.send(chat, choose(session, 'Статистика', 'Статистика', 'Statistics') + `\nСессии: ${counts.sessions}\nЧерновики: ${counts.drafts}\nЗадания: ${counts.generation_jobs}\nОжидают отправки: ${counts.outbox}\nПауза провайдера: ${pause} сек.\nЗаписей в справочнике: ${catalog(store).length}`, [[{ text: '⬅️ Админ-панель', callback_data: 'admin:open' }]]); return true;
@@ -60,7 +66,7 @@ export function handleAdmin(dialogue, chat, text, callback, command, owner) {
   if (action === 'undo') {
     const undo = store.meta('directory_undo');
     if (!undo) store.send(chat, choose(session, 'Изменений для отмены нет.', 'Бас тартатын өзгеріс жоқ.', 'No change to undo.'));
-    else { store.setMeta('directory_overrides', undo.overrides); store.setMeta('directory_extra', undo.extra); store.setMeta('directory_undo', null); store.send(chat, choose(session, 'Последнее изменение справочника отменено.', 'Анықтамалықтың соңғы өзгерісі қайтарылды.', 'Last directory change undone.')); }
+    else { store.setMeta('directory_overrides', undo.overrides); store.setMeta('directory_extra', undo.extra); store.setMeta('directory_undo', null); store.setMeta('directory_revision', store.meta('directory_revision', 0) + 1); store.send(chat, choose(session, 'Последнее изменение справочника отменено.', 'Анықтамалықтың соңғы өзгерісі қайтарылды.', 'Last directory change undone.')); }
     return true;
   }
   if (action === 'close') { const next = restoreStep(session); store.put(chat, next); store.send(chat, choose(session, 'Вернулись к боту. Новая задача: /new', 'Ботқа оралдыңыз. Жаңа тапсырма: /new', 'Back to the bot. New task: /new')); return true; }
@@ -76,6 +82,7 @@ export function handleAdmin(dialogue, chat, text, callback, command, owner) {
       const person = { id: 'extra_' + crypto.randomUUID().slice(0, 8), group: session.admin_group, name: parts[0], role: parts[1], roleKk: parts[1], short: `${parts[1].slice(0, 22)} · ${parts[0].split(' ')[0]}`, aliases: [parts[0].split(' ')[0].toLowerCase()], source: 'owner' };
       store.setMeta('directory_extra', [...extra, person]);
     }
+    store.setMeta('directory_revision', store.meta('directory_revision', 0) + 1);
     store.put(chat, restoreStep(session)); store.send(chat, choose(session, 'Общий справочник обновлён. История готовых текстов сохранена.', 'Ортақ анықтамалық жаңартылды. Бұрын дайындалған мәтіндер сақталды.', 'Shared directory updated. Existing drafts remain saved.'), [[{ text: '⬅️ Админ-панель', callback_data: 'admin:open' }]]); return true;
   }
   return true;

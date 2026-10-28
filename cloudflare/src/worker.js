@@ -1,5 +1,7 @@
 import { Store, Dialogue, SYSTEM, RETRY_BUTTONS, resultButtons, messagesFor, outputBudget, parseDelay } from './core.js';
 import { renderScenario, isScenario, timeline, scriptSchema, scriptStructurePrompt, renderStructuredScenario } from './scenario.js';
+import { buildDocument } from './exports.js';
+import { MAX_DOCX_BYTES, ImportError, importIsCurrent, completeDocumentImport, failDocumentImport } from './imports.js';
 
 const json = (data, status = 200) => Response.json(data, { status });
 export function secretEqual(a, b) {
@@ -51,6 +53,23 @@ export async function readJson(request, limit) {
   const body = new Uint8Array(size); let offset = 0;
   for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
   return JSON.parse(new TextDecoder().decode(body));
+}
+
+export async function readDocumentBytes(response, limit = MAX_DOCX_BYTES) {
+  if (Number(response.headers.get('Content-Length')) > limit) throw new ImportError('Документ больше 1 МБ. Отправьте DOCX меньшего размера.');
+  const reader = response.body?.getReader(); if (!reader) throw new ImportError('Не удалось прочитать файл.');
+  const chunks = []; let size = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      size += value.byteLength;
+      if (size > limit) { await reader.cancel(); throw new ImportError('Документ больше 1 МБ. Отправьте DOCX меньшего размера.'); }
+      chunks.push(value);
+    }
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(size); let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return bytes;
 }
 
 export class OaiuBot {
@@ -154,6 +173,21 @@ export class OaiuBot {
     }
     return renderScenario(job.session, text + (choice.finish_reason === 'length' ? '\n\n[Достигнут предел ответа. Попросите продолжить или сократить текст.]' : ''));
   }
+  async importDocument(chat, payload) {
+    if (!importIsCurrent(this.store, chat, payload)) return;
+    const file = await this.telegram('getFile', { file_id: payload.file_id });
+    if (file.file_size > MAX_DOCX_BYTES) throw new ImportError('Документ больше 1 МБ. Отправьте DOCX меньшего размера.');
+    const path = String(file.file_path || '');
+    if (!/^[a-zA-Z0-9_/-]+\.[a-zA-Z0-9]+$/.test(path) || path.includes('..') || path.startsWith('/')) throw new ImportError('Telegram не вернул подходящий файл. Отправьте документ ещё раз.');
+    let response;
+    try { response = await fetch(`https://api.telegram.org/file/bot${this.env.TELEGRAM_BOT_TOKEN}/${path}`, { redirect: 'error', signal: AbortSignal.timeout(15000) }); }
+    catch { throw new ServiceError('Telegram'); }
+    if (!response.ok) throw new ServiceError('Telegram', response.status);
+    let bytes;
+    try { bytes = await readDocumentBytes(response); }
+    catch (error) { if (error instanceof ImportError) throw error; throw new ServiceError('Telegram'); }
+    completeDocumentImport(this.store, chat, payload, bytes);
+  }
   async flushOutbox() {
     if (this.flushing) return this.flushing;
     this.flushing = this.deliver();
@@ -166,15 +200,31 @@ export class OaiuBot {
       if (row.job_id && this.store.job(row.chat_id)?.id !== row.job_id) { this.store.exec('DELETE FROM outbox WHERE id=?', row.id); continue; }
       const payload = JSON.parse(row.payload);
       try {
-        if (row.kind === 'document') {
+        if (row.kind === 'import_document') {
+          await this.importDocument(row.chat_id, payload);
+        } else if (row.kind === 'document') {
           const form = new FormData(); form.set('chat_id', String(row.chat_id));
-          form.set('document', new Blob(['\uFEFF', payload.text], { type: 'text/plain;charset=utf-8' }), 'OAIU-text.txt');
+          if (['docx', 'pdf'].includes(payload.format)) {
+            let file;
+            try { file = await buildDocument(payload); }
+            catch {
+              this.store.exec('DELETE FROM outbox WHERE id=?', row.id);
+              this.store.send(row.chat_id, 'Не удалось собрать документ. Готовый текст сохранён — можно скачать TXT или повторить экспорт.');
+              continue;
+            }
+            form.set('document', new Blob([file.bytes], { type: file.mime }), file.filename);
+          } else form.set('document', new Blob(['\uFEFF', payload.text], { type: 'text/plain;charset=utf-8' }), 'OAIU-text.txt');
           await this.telegram('sendDocument', form, true);
         } else await this.telegram(row.kind === 'callback' ? 'answerCallbackQuery' : row.kind === 'commands' ? 'setMyCommands' : 'sendMessage', payload);
         this.store.exec('DELETE FROM outbox WHERE id=?', row.id);
         const job = this.store.job(row.chat_id);
         if (row.job_id && job?.id === row.job_id && job.result && !this.store.one('SELECT 1 FROM outbox WHERE job_id=?', row.job_id)) this.store.exec('DELETE FROM generation_jobs WHERE chat_id=?', row.chat_id);
       } catch (error) {
+        if (row.kind === 'import_document' && (error instanceof ImportError || error instanceof ServiceError && ([400, 403, 404].includes(error.status) || row.attempts >= 5))) {
+          this.store.exec('DELETE FROM outbox WHERE id=?', row.id);
+          failDocumentImport(this.store, row.chat_id, payload.nonce, error instanceof ImportError ? error.message : undefined);
+          continue;
+        }
         if (!(error instanceof ServiceError)) throw error;
         console.warn('Telegram delivery delayed', error.status);
         if (error.status === 403) { this.store.cancel(row.chat_id); this.store.exec('DELETE FROM outbox WHERE chat_id=?', row.chat_id); }

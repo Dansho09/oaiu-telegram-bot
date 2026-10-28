@@ -3,10 +3,13 @@ import { catalog, snapshotPeople, choose, showDirectory, enrichPeople, ambiguous
 import { isScenario, scenarioPrompt, scenarioBody, scenarioChange, mentionedDuration, inferPreset, showProfiles, showDuration, showSettings, handleScenario } from './scenario.js';
 
 import { ownerIdentity, handleAdmin } from './admin.js';
+import { captureResultContext, handleCompanion } from './companion.js';
+import { samplePrompt } from './imports.js';
+import { localizeButtons } from './buttons.js';
 
 export { SYSTEM, RESULT_BUTTONS };
 export function resultButtons(session) {
-  return [...RESULT_BUTTONS, [{ text: '👥 Руководство / участники', callback_data: 'staff:open' }], ...(isScenario(session) ? [[{ text: '⚙️ Тайминг, ведущие, выходы', callback_data: 'event:config' }]] : [])];
+  return [...RESULT_BUTTONS, [{ text: '✅ Проверка перед выступлением', callback_data: 'check:open' }], [{ text: '👥 Руководство / участники', callback_data: 'staff:open' }], ...(isScenario(session) ? [[{ text: '🧩 Конструктор программы', callback_data: 'program:open' }, { text: '👥 Листы для команды', callback_data: 'sheet:menu' }], [{ text: '⚙️ Тайминг, ведущие, выходы', callback_data: 'event:config' }]] : [])];
 }
 export const RETRY_BUTTONS = [[{ text: 'Повторить', callback_data: 'retry:yes' }]];
 export const SCHEMA = [
@@ -60,7 +63,7 @@ export function briefPrompt(s) {
 }
 
 export function messagesFor(job) {
-  const messages = [{ role: 'user', content: briefPrompt(job.session) }];
+  const messages = [{ role: 'user', content: briefPrompt(job.session) + samplePrompt(job.session) }];
   if (job.instruction && job.session.result) messages.push({ role: 'assistant', content: isScenario(job.session) ? scenarioBody(job.session.result) : job.session.result }, { role: 'user', content: job.instruction });
   return messages;
 }
@@ -95,11 +98,13 @@ export class Store {
   cancel(chat) {
     this.exec('DELETE FROM generation_jobs WHERE chat_id=?', chat);
     this.exec('DELETE FROM outbox WHERE chat_id=? AND job_id IS NOT NULL', chat);
+    this.exec("DELETE FROM outbox WHERE chat_id=? AND kind='import_document'", chat);
   }
   effect(chat, kind, payload, jobId = null) {
     this.exec('INSERT INTO outbox(chat_id,kind,payload,job_id) VALUES (?,?,?,?)', chat, kind, JSON.stringify(payload), jobId);
   }
   send(chat, text, buttons = null, jobId = null) {
+    if (buttons) buttons = localizeButtons(buttons, this.get(chat), this);
     const chunks = splitText(text);
     chunks.forEach((chunk, i) => this.effect(chat, 'message', {
       chat_id: chat, text: chunk, link_preview_options: { is_disabled: true },
@@ -119,6 +124,7 @@ export class Store {
     return this.transaction(() => {
       const job = this.job(chat); if (!job || job.id !== id || job.result) return false;
       const ready = { ...session, step: 'ready', result };
+      ready.result_context = captureResultContext(ready);
       for (const key of ['pending_instruction', 'pending_generation_instruction', 'directory_mode', 'directory_group', 'directory_return_step', 'script_editing', 'brief_prefilled']) delete ready[key];
       const { result: unused, ...context } = ready;
       this.put(chat, ready);
@@ -144,7 +150,7 @@ export class Dialogue {
       const message = callback?.message || update.message || {};
       const chat = message.chat?.id;
       if (callback?.id && Number.isSafeInteger(chat)) this.store.effect(chat, 'callback', { callback_query_id: callback.id });
-      if (Number.isSafeInteger(chat) && message.chat.type === 'private') this.process(chat, String(message.text || '').trim(), String(callback?.data || ''), callback?.from || message.from);
+      if (Number.isSafeInteger(chat) && message.chat.type === 'private') this.process(chat, String(message.text || '').trim(), String(callback?.data || ''), callback?.from || message.from, callback ? null : message.document);
       this.store.exec('INSERT INTO seen_updates VALUES (?,?)', update.update_id, Date.now());
       this.store.exec('DELETE FROM seen_updates WHERE created<?', Date.now() - 7 * 86400000);
       return true;
@@ -178,7 +184,7 @@ export class Dialogue {
   }
   handlePeople(chat, text, callback, command) {
     const s = this.store; let session = s.get(chat);
-    const query = !callback && !command ? directoryQuery(text) : null;
+    const query = !callback && !command && !session.step?.startsWith('program_') ? directoryQuery(text) : null;
     if (command === '/people' || callback === 'staff:open' || query) { this.openPeople(chat, session, query || 'all'); return true; }
     if (callback.startsWith('person:')) {
       const person = catalog(s).find(person => person.id === callback.slice(7)); if (!person) return true;
@@ -209,6 +215,10 @@ export class Dialogue {
   }
   generate(chat, session, instruction = null, reviewed = false) {
     session = scenarioChange(session, instruction);
+    if (session.sample_id && session.reference_sample?.id !== session.sample_id) {
+      const sample = this.store.meta('approved_samples', []).find(sample => sample.id === session.sample_id);
+      session = { ...session, reference_sample: sample ? structuredClone(sample) : null };
+    } else if (!session.sample_id) { session = { ...session }; delete session.reference_sample; }
     if (!reviewed) session = enrichPeople(session, instruction || session.brief || '', this.store);
     session = snapshotPeople(session, this.store);
     const ambiguous = !reviewed && ambiguousPeople(instruction || session.brief || '', session);
@@ -220,32 +230,47 @@ export class Dialogue {
     session = { ...session, pending_instruction: instruction }; this.store.put(chat, session);
     if (!this.env.GROQ_API_KEY) { this.store.send(chat, 'Для генерации владелец должен подключить ключ Groq. Задание сохранено.', RETRY_BUTTONS); return; }
     const existing = this.store.job(chat);
-    if (existing && existing.instruction === instruction && ['format', 'language', 'tone', 'length', 'brief', 'result', 'people', 'custom_people', 'event_preset', 'event_minutes', 'event_start', 'host_count', 'host_names', 'stage_key', 'stage_note'].every(key => JSON.stringify(existing.session[key]) === JSON.stringify(session[key]))) return;
+    if (existing && existing.instruction === instruction && ['format', 'language', 'tone', 'length', 'brief', 'result', 'people', 'custom_people', 'event_preset', 'event_minutes', 'event_start', 'host_count', 'host_names', 'stage_key', 'stage_note', 'program_blocks', 'reference_sample'].every(key => JSON.stringify(existing.session[key]) === JSON.stringify(session[key]))) return;
     this.store.cancel(chat);
-    const job = { id: crypto.randomUUID(), session, instruction, notice_sent: true, next_at: 0, failures: 0 };
+    const generationSession = { ...session };
+    delete generationSession.result_context;
+    delete generationSession.script_data;
+    const job = { id: crypto.randomUUID(), session: generationSession, instruction, notice_sent: true, next_at: 0, failures: 0 };
     this.store.saveJob(chat, job);
     if (!existing?.notice_sent) this.store.send(chat, 'Готовлю текст…', null, job.id);
   }
-  process(chat, text, callback, sender) {
-    const s = this.store, command = text.startsWith('/') ? text.split(/\s/, 1)[0].split('@', 1)[0] : '';
+  process(chat, text, callback, sender, document = null) {
+    const s = this.store;
+    let command = text.startsWith('/') ? text.split(/\s/, 1)[0].split('@', 1)[0] : '';
     if (this.env.BOT_ACCESS_CODE && !s.one('SELECT 1 FROM authorized WHERE chat_id=?', chat)) {
       if (command === '/start' && text.split(/\s+/)[1] === this.env.BOT_ACCESS_CODE) s.exec('INSERT OR IGNORE INTO authorized VALUES (?)', chat);
       else { s.send(chat, 'Бот работает по приглашению. Откройте ссылку доступа, которую выдаёт владелец.'); return; }
     }
     const owner = ownerIdentity(s, this.env, chat, sender, command === '/admin');
-    if (handleAdmin(this, chat, text, callback, command, owner)) return;
+    if (handleAdmin(this, chat, text, callback, command, owner, document)) return;
     if (['/start', '/new', '/cancel'].includes(command) || callback === 'new:yes') { this.menu(chat, owner); return; }
-    if (command === '/help') { s.send(chat, 'Выберите формат, язык, объём и тон, затем опишите событие. Для сценария доступны часы программы, время начала, ведущие и выходы. Руководство можно выбрать кнопкой или открыть через /people. После ответа можно написать правки обычным сообщением.\n\n/new — новый текст\n/people — руководство и кафедры\n/history — последние черновики\n/privacy — обработка данных\n/delete — удалить сохранённые тексты\n/cancel — отменить текущую задачу'); return; }
-    if (command === '/privacy') { s.send(chat, 'Сообщения проходят через Telegram. Для генерации описание события и текущий текст отправляются в Groq; идентификатор Telegram в запрос модели не входит. В Cloudflare хранятся текущая задача и до 10 последних версий текста. /delete удаляет эти записи из базы бота, но не переписку и данные у Telegram или Groq.'); return; }
+    const shortcut = { '/word': 'export:docx', '/pdf': 'export:pdf', '/txt': 'export:txt', '/check': 'check:open', '/sheets': 'sheet:menu', '/program': 'program:open' }[command];
+    if (shortcut) { callback = shortcut; command = ''; }
+    if (command === '/help') { s.send(chat, 'Выберите формат, язык, объём и тон, затем опишите событие. Для сценария доступны часы программы, время начала, ведущие и выходы. Руководство можно выбрать кнопкой или открыть через /people. После ответа можно написать правки обычным сообщением.\n\n/new — новый текст\n/people — руководство и кафедры\n/history — последние черновики\n/word · /pdf · /txt — скачать готовый текст\n/program — конструктор программы\n/sheets — отдельные листы для команды\n/check — проверка перед выступлением\n/privacy — обработка данных\n/delete — удалить сохранённые тексты\n/cancel — отменить текущую задачу'); return; }
+    if (command === '/privacy') { s.send(chat, 'Сообщения проходят через Telegram. Для генерации описание события и текущий текст отправляются в Groq; идентификатор Telegram в запрос модели не входит. В Cloudflare хранятся текущая задача и до 10 последних версий текста. Word и PDF собираются внутри Cloudflare без внешних конвертеров. Владелец может загрузить DOCX: после проверки и подтверждения в общем справочнике сохраняются только ФИО/должности, а в образцах — названия блоков сценария; сам файл не сохраняется. /delete удаляет эти записи из базы бота, но не переписку и данные у Telegram или Groq.'); return; }
     if (command === '/delete') { s.send(chat, 'Удалить текущую задачу и все ваши сохранённые черновики из базы бота?', [[{ text: 'Удалить мои тексты', callback_data: 'delete:confirm' }, { text: 'Отмена', callback_data: 'delete:cancel' }]]); return; }
     if (callback === 'delete:confirm') {
       s.cancel(chat); for (const table of ['sessions', 'drafts', 'quota', 'outbox']) s.exec(`DELETE FROM ${table} WHERE chat_id=?`, chat);
       s.send(chat, 'Ваши тексты удалены из базы бота. Новый текст: /new'); return;
     }
     if (callback === 'delete:cancel') { s.send(chat, 'Сохранённые тексты оставлены.'); return; }
+    if (handleCompanion(this, chat, text, callback, command)) return;
     if (command === '/history') {
       const rows = s.rows('SELECT id,title,created FROM drafts WHERE chat_id=? ORDER BY id DESC LIMIT 5', chat);
       s.send(chat, rows.length ? 'Ваши последние черновики:' : 'Черновиков пока нет. Создать первый: /new', rows.length ? rows.map(d => [{ text: d.title.slice(0, 45) || d.created, callback_data: `history:${d.id}` }]) : null); return;
+    }
+    if (callback.startsWith('history:')) {
+      const value = callback.slice(8);
+      const draft = /^\d+$/.test(value) ? s.one('SELECT text,context FROM drafts WHERE chat_id=? AND id=?', chat, Number(value)) : null;
+      if (!draft) { s.send(chat, 'Этот черновик недоступен. Обновите список: /history'); return; }
+      s.cancel(chat);
+      const session = { step: 'ready', format: 'speech', language: 'auto', tone: 'warm', length: '3', brief: 'Отредактировать сохранённый текст, сохранив содержащиеся в нём факты.', ...JSON.parse(draft.context || '{}'), result: draft.text };
+      s.put(chat, session); s.send(chat, draft.text, resultButtons(session)); return;
     }
     if (!command && !callback) {
       const current = s.get(chat), answer = text.trim().toLocaleLowerCase();
@@ -260,12 +285,6 @@ export class Dialogue {
     if (!command && handleScenario(this, chat, text, callback)) return;
     let session = s.get(chat);
     const [kind, value] = callback.split(':', 2);
-    if (kind === 'history') {
-      const draft = /^\d+$/.test(value) ? s.one('SELECT text,context FROM drafts WHERE chat_id=? AND id=?', chat, Number(value)) : null;
-      if (!draft) { s.send(chat, 'Этот черновик недоступен. Обновите список: /history'); return; }
-      session = { step: 'ready', format: 'speech', language: 'auto', tone: 'warm', length: '3', brief: 'Отредактировать сохранённый текст, сохранив содержащиеся в нём факты.', ...JSON.parse(draft.context || '{}'), result: draft.text };
-      s.put(chat, session); s.send(chat, draft.text, resultButtons(session)); return;
-    }
     if (kind === 'type' && Object.hasOwn(FORMATS, value)) {
       s.put(chat, { step: 'language', format: value, people: session.people || [], custom_people: session.custom_people || [], directory_people: session.directory_people || [] }); s.send(chat, 'На каком языке подготовить текст?', keyboard(LANGUAGES, 'language', 3)); return;
     }
