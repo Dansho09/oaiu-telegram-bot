@@ -242,6 +242,15 @@ export class Dialogue {
       const rows = s.rows('SELECT id,title,created FROM drafts WHERE chat_id=? ORDER BY id DESC LIMIT 5', chat);
       s.send(chat, rows.length ? 'Ваши последние черновики:' : 'Черновиков пока нет. Создать первый: /new', rows.length ? rows.map(d => [{ text: d.title.slice(0, 45) || d.created, callback_data: `history:${d.id}` }]) : null); return;
     }
+    if (!command && !callback) {
+      const current = s.get(chat), answer = text.trim().toLocaleLowerCase();
+      if (current.step === 'event_settings' && /^(?:жалғастыру|продолжить|continue|дайын|готово|done)$/.test(answer)) callback = 'event:ready';
+      else if (current.directory_mode && /^(?:жалғастыру|продолжить|continue|дайын|готово|done)$/.test(answer)) callback = 'staff:done';
+      else if (current.step === 'tone') {
+        const tone = { 'жылы': 'warm', 'тёплый': 'warm', 'теплый': 'warm', 'warm': 'warm', 'салтанатты': 'formal', 'торжественный': 'formal', 'formal': 'formal', 'шабыттандыратын': 'inspiring', 'вдохновляющий': 'inspiring', 'inspiring': 'inspiring', 'іскерлік': 'business', 'деловой': 'business', 'business': 'business' }[answer];
+        if (tone) callback = 'tone:' + tone;
+      }
+    }
     if (this.handlePeople(chat, text, callback, command)) return;
     if (!command && handleScenario(this, chat, text, callback)) return;
     let session = s.get(chat);
@@ -286,7 +295,9 @@ export class Dialogue {
     else if (session.step === 'brief') this.generate(chat, { ...session, brief: text });
     else if (session.step === 'type') {
       if (/сценари|сценарий|scenario|event script/iu.test(text)) {
-        const next = { ...session, format: 'script', language: /[әғқңөұүһі]|ертең|болады/iu.test(text) ? 'kk' : /scenario|event script/iu.test(text) ? 'en' : 'ru', event_preset: inferPreset(text), event_minutes: mentionedDuration(text), host_count: 2, stage_key: /спортзал|gym/iu.test(text) ? 'gym' : 'right_left', brief: text, brief_prefilled: true };
+        let next = { ...session, format: 'script', language: /[әғқңөұүһі]|ертең|болады/iu.test(text) ? 'kk' : /scenario|event script/iu.test(text) ? 'en' : 'ru', event_preset: inferPreset(text), event_minutes: mentionedDuration(text), host_count: 2, stage_key: /спортзал|gym/iu.test(text) ? 'gym' : 'right_left', brief: text, brief_prefilled: true };
+        next = scenarioChange(next, text);
+        if (next.stage_key === 'custom') next.stage_note = text.split(/(?<=[.!?])\s+/u).filter(part => /справа|слева|оң\s*жақ|сол\s*жақ/iu.test(part)).join(' ').slice(0, 500) || next.stage_note;
         next.event_minutes ? showSettings(s, chat, next) : showDuration(s, chat, next);
       } else this.generate(chat, { ...session, step: 'brief', format: 'speech', language: 'ru', length: '3', tone: 'warm', brief: text });
     }

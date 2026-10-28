@@ -133,7 +133,7 @@ export class OaiuBot {
     if (model === 'qwen/qwen3.8-27b') Object.assign(payload, { reasoning_effort: 'none', reasoning_format: 'hidden' });
     if (model.startsWith('openai/gpt-oss-')) Object.assign(payload, { reasoning_effort: 'low', include_reasoning: false });
     const structured = job.session.format === 'script' && timeline(job.session).length && model.startsWith('openai/gpt-oss-');
-    if (structured) { payload.response_format = scriptSchema(job.session); payload.messages.push({ role: 'user', content: scriptStructurePrompt(job.session) }); }
+    if (structured) { payload.max_completion_tokens = Math.max(payload.max_completion_tokens, 1400 + 900 * (job.session.host_count || 2)); payload.response_format = scriptSchema(job.session); payload.messages.push({ role: 'user', content: scriptStructurePrompt(job.session) }); }
     let response, data;
     try {
       response = await fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.env.GROQ_API_KEY}` }, body: JSON.stringify(payload), signal: AbortSignal.timeout(75000) });
