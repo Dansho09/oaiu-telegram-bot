@@ -19,7 +19,7 @@ async function mockFetch(handler, run) { const original = globalThis.fetch; glob
 test('Telegram document update downloads only the official path and publishes only after owner review', async () => {
   const f = configured(), payload = queued(f), before = catalog(f.store); fileStub(f);
   await mockFetch(async (url, options) => {
-    assert.equal(url, 'https://api.telegram.org/file/bottest-token/documents/file_1.docx'); assert.equal(options.redirect, 'error'); assert.ok(options.signal instanceof AbortSignal);
+    assert.equal(url, 'https://api.telegram.org/file/bottest-token/documents/file_1.docx'); assert.equal(options.redirect, 'manual'); assert.ok(options.signal instanceof AbortSignal);
     return new Response(document());
   }, () => f.bot.flushOutbox());
   assert.equal(f.sent[0].method, 'sendMessage'); assert.equal(f.sent[0].payload.text, 'Құжатты оқып жатырмын…');
@@ -88,4 +88,10 @@ test('failed getFile requests never copy secrets or network diagnostics to the u
     const payload = JSON.parse(f.store.one("SELECT payload FROM outbox WHERE kind='import_document'").payload);
     await assert.rejects(f.bot.importDocument(70, payload), e => e instanceof ServiceError && e.status === 404 && !e.message.includes('test-token') && !e.message.includes('Secret transport detail'));
   });
+});
+
+test('DOCX downloads use Workers-compatible manual mode and refuse redirects before reading',async()=>{
+ const f=configured(),payload=queued(f);fileStub(f);let requests=0;
+ await mockFetch(async(url,options)=>{requests++;if(options.redirect==='error')throw new TypeError('Invalid redirect value');assert.equal(options.redirect,'manual');return new Response(null,{status:302,headers:{Location:'https://untrusted.invalid/file.docx'}});},async()=>{await assert.rejects(f.bot.importDocument(70,payload),ImportError);});
+ assert.equal(requests,1);assert.equal(f.store.get(70).step,'admin_import_loading');assert.equal(f.store.meta('directory_overrides'),null);
 });

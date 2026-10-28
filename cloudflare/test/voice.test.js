@@ -48,3 +48,14 @@ test('voice task card identifies supplied facts and leaves ambiguous spoken cloc
  assert.match(card,/Формат: Сценарий/);assert.match(card,/Күні: Ертең/);assert.match(card,/Басталуы: 14:00/);assert.match(card,/Ұзақтығы: 30 минут/);assert.match(card,/Жүргізуші саны: 2/);
  assert.match(voiceBriefCard('Басталуы сағат екіде.'),/Басталуы: нақтылау керек/);
 });
+
+test('Workers-compatible download reports loading first and never follows Telegram redirects',async()=>{
+ const f=fixture();f.dialogue.accept(msg('',note));tap(f,'transcribe');const events=[],delivered=[];
+ f.bot.telegram=async(method,payload)=>{if(method==='getFile'){events.push('getFile');return{file_path:'voice/file.oga',file_size:100};}if(method==='sendMessage'){delivered.push(payload.text);if(payload.text==='Дауысты мәтінге айналдырып жатырмын…')events.push('loading');}return{};};
+ const oldFetch=globalThis.fetch;globalThis.fetch=async(url,options)=>{
+  if(options.redirect==='error')throw new TypeError('Invalid redirect value, must be follow or manual');
+  if(String(url).startsWith('https://api.telegram.org/file/')){assert.equal(options.redirect,'manual');events.push('download');return new Response(null,{status:302,headers:{Location:'https://untrusted.invalid/private-file'}});}
+  throw new Error('A redirected file must never be sent to Groq');
+ };
+ try{await f.bot.flushOutbox();assert.ok(events.indexOf('loading')<events.indexOf('download'));assert.equal(f.store.get(96).step,'voice_consent');assert.match(delivered.at(-1),/Қауіпсіздік/);assert.equal(f.store.one("SELECT COUNT(*) n FROM outbox WHERE kind='voice_transcribe'").n,0);}finally{globalThis.fetch=oldFetch;}
+});
