@@ -143,6 +143,14 @@ export function renderStructuredScenario(session, data) {
     const cue = match ? choose(session, 'Во время игры ведущие остаются за пределами игровой зоны. Переход объявляют после сигнала судьи.', 'Ойын кезінде жүргізушілер ойын алаңынан тыс тұрады. Келесі кезеңді төреші белгі бергеннен кейін хабарлайды.', 'During play, hosts remain outside the playing area. Announce transitions after the official signal.')
       : gym ? direction : choose(session, `Ремарка: ${direction} Реплики произносятся в согласованной центральной точке; проходы свободны.`, `Ремарка: ${direction} Репликалар келісілген орталық орында айтылады; өту жолы бос қалады.`, `Stage cue: ${direction} Deliver lines at the agreed center position; keep access clear.`);
     const lines = Array.from({ length: count }, (_, n) => `${hostLabel(n + 1)}: ${plain(block.lines[`host_${n + 1}`])}`);
+    const facts = (session.brief || '') + '\n' + (session.pending_instruction || '');
+    const prizes = /медал|кубо[кч]|кубк|троф|medal|troph|\bcups?\b/iu;
+    if (/Награжд|Марапат|Awards/iu.test(row.title) && !prizes.test(facts)) {
+      lines.forEach((line, n) => { if (prizes.test(line)) lines[n] = `${hostLabel(n + 1)}: ` + choose(session, '[Награждающий] вручает [согласованные награды]. Поздравляем участников!', '[Марапаттаушы] [келісілген марапаттарды] табыстайды. Қатысушыларды құттықтаймыз!', '[Presenter] presents [confirmed awards]. Congratulations to the participants!'); });
+    }
+    if (/Резерв|Үзіліс|Break|Buffer/iu.test(row.title) && !/тур|раунд|round/iu.test(facts)) {
+      lines.forEach((line, n) => { if (/втор|екінші|second|следующ.*матч|келесі.*матч/iu.test(line)) lines[n] = `${hostLabel(n + 1)}: ` + choose(session, 'Сделаем перерыв. Следующий блок объявим по сигналу организатора.', 'Үзіліс жасаймыз. Ұйымдастырушы белгі бергенде келесі бөлімді хабарлаймыз.', 'We will take a break and announce the next segment on the organizers signal.'); });
+    }
     if (i === welcomeIndex && selectedPeople(session).length) {
       const roster = selectedPeople(session).map(person => `${personRole(person, session)} — ${personName(person, session)}`).join('; ');
       lines.length = 0;

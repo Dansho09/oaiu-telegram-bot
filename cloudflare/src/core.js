@@ -26,12 +26,17 @@ export const SCHEMA = [
 ];
 
 export function splitText(text, limit = 3600) {
-  const chunks = []; let current = '';
-  for (const char of String(text)) {
-    if (current.length + char.length > limit) { chunks.push(current); current = ''; }
-    current += char;
+  const chunks = []; let rest = String(text);
+  while (rest.length > limit) {
+    let end = limit;
+    if (/[\uD800-\uDBFF]/.test(rest[end - 1])) end--;
+    const paragraph = rest.lastIndexOf('\n\n', end - 2), line = rest.lastIndexOf('\n', end - 1), space = rest.lastIndexOf(' ', end - 1);
+    if (paragraph >= limit / 2) end = paragraph + 2;
+    else if (line >= limit / 2) end = line + 1;
+    else if (space >= limit / 2) end = space + 1;
+    chunks.push(rest.slice(0, end)); rest = rest.slice(end);
   }
-  if (current) chunks.push(current);
+  if (rest) chunks.push(rest);
   return chunks.length ? chunks : ['Текст пока пуст.'];
 }
 
