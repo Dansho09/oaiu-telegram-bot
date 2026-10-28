@@ -82,3 +82,7 @@ test('export formatting retains content, strips only decorative markup and block
   const result = await buildDocument({ text: 'Текст', filename: '../../bad\nname.pdf' });
   assert.doesNotMatch(result.filename, /[/\n]/);
 });
+
+test('new organizer tool symbols do not become Unicode-code placeholders in printable headings',()=>{
+ assert.equal(cleanExportText('🏐 ТУРНИР КЕСТЕСІ\n🚨 ЖЕДЕЛ ӨЗГЕРІС\n🔒 БЕКІТІЛГЕН МӘТІН'), 'ТУРНИР КЕСТЕСІ\nЖЕДЕЛ ӨЗГЕРІС\nБЕКІТІЛГЕН МӘТІН');
+});
