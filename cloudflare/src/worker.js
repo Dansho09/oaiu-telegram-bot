@@ -187,8 +187,9 @@ export class OaiuBot {
     const path = String(file.file_path || '');
     if (!/^[a-zA-Z0-9_/-]+\.[a-zA-Z0-9]+$/.test(path) || path.includes('..') || path.startsWith('/')) throw new ImportError('Telegram жарамды файлды қайтармады. Құжатты қайта жіберіңіз.');
     let response;
-    try { response = await fetch(`https://api.telegram.org/file/bot${this.env.TELEGRAM_BOT_TOKEN}/${path}`, { redirect: 'error', signal: AbortSignal.timeout(15000) }); }
+    try { response = await fetch(`https://api.telegram.org/file/bot${this.env.TELEGRAM_BOT_TOKEN}/${path}`, { redirect: 'manual', signal: AbortSignal.timeout(15000) }); }
     catch { throw new ServiceError('Telegram'); }
+    if (response.status >= 300 && response.status < 400) throw new ImportError('Telegram файлды басқа мекенжайға бағыттады. Қауіпсіздік үшін жүктеу тоқтатылды. Құжатты қайта жіберіңіз.');
     if (!response.ok) throw new ServiceError('Telegram', response.status);
     let bytes;
     try { bytes = await readDocumentBytes(response); }
@@ -201,29 +202,44 @@ export class OaiuBot {
     try { await this.flushing; } finally { this.flushing = null; }
   }
   async transcribeVoice(chat, payload) {
-    if (!voiceIsCurrent(this.store, chat, payload)) { failVoice(this.store, chat, payload); return; }
-    const until = this.store.reserve(chat, Date.now());
-    if (until) throw new ServiceError('GroqASR', 429, Math.ceil((until - Date.now()) / 1000));
-    const file = await this.telegram('getFile', { file_id: payload.file_id });
-    if (file.file_size > MAX_VOICE_BYTES) throw new VoiceError('Дауыстық хабарлама 5 МБ-тан аспауы керек.');
-    const path = String(file.file_path || '');
-    if (!/^[a-zA-Z0-9_/-]+\.[a-zA-Z0-9]+$/.test(path) || path.includes('..') || path.startsWith('/')) throw new VoiceError('Telegram дауыстық файлды қайтармады. Хабарламаны қайта жіберіңіз.');
-    let response;
-    try { response = await fetch(`https://api.telegram.org/file/bot${this.env.TELEGRAM_BOT_TOKEN}/${path}`, { redirect: 'error', signal: AbortSignal.timeout(15000) }); }
-    catch { throw new ServiceError('Telegram'); }
-    if (!response.ok) throw new ServiceError('Telegram', response.status);
-    const bytes = await readVoiceBytes(response);
-    if (!voiceIsCurrent(this.store, chat, payload)) return;
-    const form = new FormData();
-    form.set('file', new Blob([bytes], { type: payload.mime_type || 'audio/ogg' }), 'voice.ogg');
-    form.set('model', this.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3');
-    form.set('response_format', 'verbose_json'); form.set('temperature', '0');
-    form.set('prompt', 'OAIU университеті. Іс-шара, сценарий, жүргізуші, басталу уақыты, акт залы, волейбол, марапаттау.');
-    let data;
-    try { response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${this.env.GROQ_API_KEY}` }, body: form, signal: AbortSignal.timeout(60000) }); data = await response.json(); }
-    catch { throw new ServiceError('GroqASR'); }
-    if (!response.ok) throw new ServiceError('GroqASR', response.status, parseDelay(response.headers.get('Retry-After')) || 60);
-    completeVoice(this.store, chat, payload, data);
+    let stage = 'queue';
+    try {
+      if (!voiceIsCurrent(this.store, chat, payload)) { failVoice(this.store, chat, payload); return; }
+      const until = this.store.reserve(chat, Date.now());
+      if (until) throw new ServiceError('GroqASR', 429, Math.ceil((until - Date.now()) / 1000));
+      stage = 'telegram_file';
+      const file = await this.telegram('getFile', { file_id: payload.file_id });
+      if (file.file_size > MAX_VOICE_BYTES) throw new VoiceError('Дауыстық хабарлама 5 МБ-тан аспауы керек.');
+      const path = String(file.file_path || '');
+      if (!/^[a-zA-Z0-9_/-]+\.[a-zA-Z0-9]+$/.test(path) || path.includes('..') || path.startsWith('/')) throw new VoiceError('Telegram дауыстық файлды қайтармады. Хабарламаны қайта жіберіңіз.');
+      stage = 'telegram_download';
+      let response;
+      // workerd supports only manual/follow. Manual keeps the bot token on the
+      // fixed Telegram origin, without the unsupported redirect:error mode.
+      try { response = await fetch(`https://api.telegram.org/file/bot${this.env.TELEGRAM_BOT_TOKEN}/${path}`, { redirect: 'manual', signal: AbortSignal.timeout(15000) }); }
+      catch { throw new ServiceError('Telegram'); }
+      if (response.status >= 300 && response.status < 400) throw new VoiceError('Telegram дыбысты басқа мекенжайға бағыттады. Қауіпсіздік үшін жүктеу тоқтатылды. Дауыстық хабарламаны қайта жіберіңіз.');
+      if (!response.ok) throw new ServiceError('Telegram', response.status);
+      const bytes = await readVoiceBytes(response);
+      if (!voiceIsCurrent(this.store, chat, payload)) return;
+      const form = new FormData();
+      form.set('file', new Blob([bytes], { type: payload.mime_type || 'audio/ogg' }), 'voice.ogg');
+      form.set('model', this.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3');
+      form.set('response_format', 'verbose_json'); form.set('temperature', '0');
+      form.set('prompt', 'OAIU университеті. Іс-шара, сценарий, жүргізуші, басталу уақыты, акт залы, волейбол, марапаттау.');
+      stage = 'groq_transcription';
+      let data;
+      try { response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${this.env.GROQ_API_KEY}` }, body: form, signal: AbortSignal.timeout(60000) }); data = await response.json(); }
+      catch { throw new ServiceError('GroqASR'); }
+      if (!response.ok) throw new ServiceError('GroqASR', response.status, parseDelay(response.headers.get('Retry-After')) || 60);
+      completeVoice(this.store, chat, payload, data);
+    } catch (error) {
+      if (error instanceof ServiceError || error instanceof VoiceError) {
+        // Never include URLs, file identifiers, audio or recognized text.
+        console.warn('Voice processing delayed', { stage, service: error.service || 'validation', status: error.status || 0 });
+      }
+      throw error;
+    }
   }
   async deliver() {
     for (let i = 0; i < 6; i++) {

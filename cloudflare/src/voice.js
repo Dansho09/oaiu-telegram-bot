@@ -74,7 +74,7 @@ export function handleVoice(dialogue,chat,text,callback,command,voice=null){
   if(action==='cancel'){cancelVoiceEffects(store,chat);store.put(chat,clearVoice(s));store.send(chat,'Дауыстық тапсырмадан бас тартылды. Бұрынғы мәтін сақталды.');return true;}
   if(action==='transcribe'&&s.step==='voice_consent'){
    if(!dialogue.env.GROQ_API_KEY){store.send(chat,'Дауысты тану үшін иесі Groq кілтін қосуы керек.');return true;}
-   store.put(chat,{...s,step:'voice_loading'});store.effect(chat,'voice_transcribe',{nonce,...Object.fromEntries(['file_id','file_size','mime_type','duration'].map(k=>[k,s.voice_request[k]]))});store.send(chat,'Дауысты мәтінге айналдырып жатырмын…');return true;
+   store.put(chat,{...s,step:'voice_loading'});store.send(chat,'Дауысты мәтінге айналдырып жатырмын…');store.effect(chat,'voice_transcribe',{nonce,...Object.fromEntries(['file_id','file_size','mime_type','duration'].map(k=>[k,s.voice_request[k]]))});return true;
   }
   if(action==='edit'&&s.step==='voice_review'){store.put(chat,{...s,step:'voice_edit'});store.send(chat,'Дұрыс мәтінді бір хабарламада жіберіңіз (3000 таңбаға дейін). Содан кейін қайта тексеріп, растайсыз.');return true;}
   if(action==='apply'&&s.step==='voice_review'){
