@@ -1,0 +1,5 @@
+TELEGRAM_BOT_TOKEN=
+GROQ_API_KEY=
+TELEGRAM_WEBHOOK_SECRET=
+# Temporary secret for the one-time, private migration. Remove after import.
+MIGRATION_TOKEN=

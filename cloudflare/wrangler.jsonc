@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "oaiu-assistant",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-28",
+  "workers_dev": true,
+  "vars": {
+    "GROQ_MODEL": "qwen/qwen3.8-27b",
+    "BOT_ACCESS_CODE": ""
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "BOT", "class_name": "OaiuBot" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OaiuBot"] }],
+  "observability": { "enabled": false }
+}
