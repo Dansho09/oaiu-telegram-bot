@@ -22,8 +22,10 @@ export function cleanExportText(value) {
 }
 
 function paragraphKind(text) {
-  if (text.length <= 130 && (/^[\p{Lu}\d][\p{Lu}\d\s·:–—()\-/]+$/u.test(text)
-    || /^\d{1,2}:\d{2}(?:\s*\(\+\d+\))?\s*[–—-]\s*\d{1,2}:\d{2}.+$/u.test(text))) return 'heading';
+  // Timing rows form a list, not a chain of keep-with-next headings.
+  if (/^\d{1,2}:\d{2}(?:\s*\(\+\d+\))?\s*[–—-]\s*\d{1,2}:\d{2}.+$/u.test(text)) return 'timeline';
+  if (text.length <= 180 && (/^[\p{Lu}\d][\p{Lu}\d\s·:–—()\-/]+$/u.test(text)
+    || /^\d{1,2}\.\s+.+\s+·\s+\d{1,2}:\d{2}(?:\s*\(\+\d+\))?\s*[–—-]\s*\d{1,2}:\d{2}/u.test(text))) return 'heading';
   return 'body';
 }
 
@@ -42,14 +44,14 @@ function run(text, bold = false) {
 }
 
 function docxParagraph({ text, kind = 'body', gap = false }) {
-  const style = kind === 'title' ? 'Title' : kind === 'heading' ? 'Heading1' : 'Normal';
+  const style = kind === 'title' ? 'Title' : kind === 'heading' ? 'Heading1' : kind === 'timeline' ? 'Timeline' : 'Normal';
   const prefix = kind === 'body' && text.match(/^((?:Ведущ(?:ий|ая)|Жүргізуші|Host|Музыка|Звук|Дыбыс|Sound|Координатор|Coordinator)\s*\d*(?:\s*(?:\([^)]*\)|·[^:]{1,80}))?\s*:)/iu);
   const content = prefix ? run(prefix[0], true) + run(text.slice(prefix[0].length)) : run(text);
   return `<w:p><w:pPr><w:pStyle w:val="${style}"/><w:widowControl/>${gap && kind === 'body' ? '<w:spacing w:before="120" w:after="100"/>' : ''}</w:pPr>${content}</w:p>`;
 }
 
 function buildDocx(title, paragraphs) {
-  const styles = `${XML}<w:styles xmlns:w="${W}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="24"/><w:color w:val="000000"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="100" w:line="300" w:lineRule="auto"/><w:widowControl/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:after="280"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/><w:color w:val="000000"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/><w:color w:val="000000"/></w:rPr></w:style></w:styles>`;
+  const styles = `${XML}<w:styles xmlns:w="${W}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="24"/><w:color w:val="000000"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="100" w:line="300" w:lineRule="auto"/><w:widowControl/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:after="280"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/><w:color w:val="000000"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/><w:color w:val="000000"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Timeline"><w:name w:val="Іс-шара жоспары"/><w:basedOn w:val="Normal"/><w:next w:val="Timeline"/><w:pPr><w:keepNext w:val="0"/><w:spacing w:before="0" w:after="60" w:line="260" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="22"/></w:rPr></w:style></w:styles>`;
   const document = `${XML}<w:document xmlns:w="${W}" xmlns:r="${DOCREL}"><w:body>${docxParagraph({ text: title, kind: 'title' })}${paragraphs.map(docxParagraph).join('')}<w:sectPr><w:footerReference w:type="default" r:id="rFooter"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1040" w:right="1040" w:bottom="1140" w:left="1040" w:header="480" w:footer="480" w:gutter="0"/></w:sectPr></w:body></w:document>`;
   const footer = `${XML}<w:ftr xmlns:w="${W}"><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t xml:space="preserve">OAIU · </w:t></w:r><w:fldSimple w:instr="PAGE"><w:r><w:t>1</w:t></w:r></w:fldSimple><w:r><w:t xml:space="preserve"> / </w:t></w:r><w:fldSimple w:instr="NUMPAGES"><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p></w:ftr>`;
   const files = {
@@ -91,7 +93,7 @@ async function buildPdf(title, paragraphs) {
   // RU, KK and EN are fully covered. Preserve uncommon unsupported symbols
   // explicitly as their Unicode code rather than silently printing a square.
   const supportedText = value => [...value].map(char => supported.has(char.codePointAt(0)) ? char : `[U+${char.codePointAt(0).toString(16).toUpperCase()}]`).join('');
-  pdf.setTitle(title); pdf.setCreator('OAIU Assistant'); pdf.setProducer('OAIU Assistant');
+  pdf.setTitle(title); pdf.setCreator('OAIU көмекшісі'); pdf.setProducer('OAIU көмекшісі');
   let page, y;
   const newPage = () => {
     if (pdf.getPageCount() >= 150) throw new RangeError('Document has too many pages');
@@ -99,11 +101,11 @@ async function buildPdf(title, paragraphs) {
   };
   newPage();
   for (const paragraph of [{ text: title, kind: 'title' }, ...paragraphs]) {
-    const heading = paragraph.kind !== 'body', font = heading ? bold : regular;
+    const heading = paragraph.kind === 'title' || paragraph.kind === 'heading', timing = paragraph.kind === 'timeline', font = heading ? bold : regular;
     const size = paragraph.kind === 'title' ? 18 : heading ? 12 : 11;
-    const lineHeight = paragraph.kind === 'title' ? 25 : heading ? 17 : 16;
+    const lineHeight = paragraph.kind === 'title' ? 25 : heading ? 17 : timing ? 14 : 16;
     const before = paragraph.kind === 'title' ? 0 : heading ? 11 : paragraph.gap ? 6 : 0;
-    const after = paragraph.kind === 'title' ? 13 : heading ? 6 : 4;
+    const after = paragraph.kind === 'title' ? 13 : heading ? 6 : timing ? 2 : 4;
     const cache = new Map(), measure = text => { if (!cache.has(text)) cache.set(text, font.widthOfTextAtSize(text, size)); return cache.get(text); };
     const lines = wrapText(supportedText(paragraph.text), PAGE.width - 2 * PAGE.margin, measure);
     const needed = lines.length * lineHeight + before + after + (heading ? 32 : 0);
@@ -124,11 +126,11 @@ async function buildPdf(title, paragraphs) {
   return pdf.save();
 }
 
-export async function buildDocument({ text, title = 'OAIU', format = 'docx', filename } = {}) {
+export async function buildDocument({ text, title = 'OAIU құжаты', format = 'docx', filename } = {}) {
   if (!Object.hasOwn(MIME, format)) throw new TypeError('Unsupported export format');
   if (typeof text !== 'string' || !text.trim()) throw new TypeError('Document text is empty');
   if (text.length > MAX_CHARS) throw new RangeError('Document is too long');
-  const cleanedTitle = cleanExportText(title).replace(/\n/g, ' ').slice(0, 180) || 'OAIU';
+  const cleanedTitle = cleanExportText(title).replace(/\n/g, ' ').slice(0, 180) || 'OAIU құжаты';
   const paragraphs = exportParagraphs(text);
   if (!paragraphs.length) throw new TypeError('Document text is empty');
   const bytes = format === 'docx' ? buildDocx(cleanedTitle, paragraphs) : await buildPdf(cleanedTitle, paragraphs);

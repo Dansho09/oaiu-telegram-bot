@@ -56,14 +56,14 @@ export async function readJson(request, limit) {
 }
 
 export async function readDocumentBytes(response, limit = MAX_DOCX_BYTES) {
-  if (Number(response.headers.get('Content-Length')) > limit) throw new ImportError('Документ больше 1 МБ. Отправьте DOCX меньшего размера.');
-  const reader = response.body?.getReader(); if (!reader) throw new ImportError('Не удалось прочитать файл.');
+  if (Number(response.headers.get('Content-Length')) > limit) throw new ImportError('Құжат 1 МБ-тан үлкен. Көлемі кішірек DOCX жіберіңіз.');
+  const reader = response.body?.getReader(); if (!reader) throw new ImportError('Файлды оқу мүмкін болмады.');
   const chunks = []; let size = 0;
   try {
     while (true) {
       const { value, done } = await reader.read(); if (done) break;
       size += value.byteLength;
-      if (size > limit) { await reader.cancel(); throw new ImportError('Документ больше 1 МБ. Отправьте DOCX меньшего размера.'); }
+      if (size > limit) { await reader.cancel(); throw new ImportError('Құжат 1 МБ-тан үлкен. Көлемі кішірек DOCX жіберіңіз.'); }
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }
@@ -127,7 +127,7 @@ export class OaiuBot {
         const job = JSON.parse(row.value);
         if (!job?.id || !job.session?.brief) throw new TypeError('Invalid job');
         if (job.result) this.store.send(row.chat_id, job.result, resultButtons(job.session), job.id);
-        else if (!job.notice_sent) this.store.send(row.chat_id, 'Готовлю текст…', null, job.id);
+        else if (!job.notice_sent) this.store.send(row.chat_id, 'Мәтін дайындап жатырмын…', null, job.id);
         this.store.saveJob(row.chat_id, { ...job, notice_sent: true, next_at: 0, failures: 0 });
       }
       for (const row of this.store.rows('SELECT value FROM sessions')) JSON.parse(row.value);
@@ -171,14 +171,14 @@ export class OaiuBot {
       try { return renderStructuredScenario(job.session, JSON.parse(text)); }
       catch { throw new ServiceError('Groq', 502); }
     }
-    return renderScenario(job.session, text + (choice.finish_reason === 'length' ? '\n\n[Достигнут предел ответа. Попросите продолжить или сократить текст.]' : ''));
+    return renderScenario(job.session, text + (choice.finish_reason === 'length' ? '\n\n[Жауап көлемінің шегіне жеттік. Жалғастыруды немесе мәтінді қысқартуды сұраңыз.]' : ''));
   }
   async importDocument(chat, payload) {
     if (!importIsCurrent(this.store, chat, payload)) return;
     const file = await this.telegram('getFile', { file_id: payload.file_id });
-    if (file.file_size > MAX_DOCX_BYTES) throw new ImportError('Документ больше 1 МБ. Отправьте DOCX меньшего размера.');
+    if (file.file_size > MAX_DOCX_BYTES) throw new ImportError('Құжат 1 МБ-тан үлкен. Көлемі кішірек DOCX жіберіңіз.');
     const path = String(file.file_path || '');
-    if (!/^[a-zA-Z0-9_/-]+\.[a-zA-Z0-9]+$/.test(path) || path.includes('..') || path.startsWith('/')) throw new ImportError('Telegram не вернул подходящий файл. Отправьте документ ещё раз.');
+    if (!/^[a-zA-Z0-9_/-]+\.[a-zA-Z0-9]+$/.test(path) || path.includes('..') || path.startsWith('/')) throw new ImportError('Telegram жарамды файлды қайтармады. Құжатты қайта жіберіңіз.');
     let response;
     try { response = await fetch(`https://api.telegram.org/file/bot${this.env.TELEGRAM_BOT_TOKEN}/${path}`, { redirect: 'error', signal: AbortSignal.timeout(15000) }); }
     catch { throw new ServiceError('Telegram'); }
@@ -209,7 +209,7 @@ export class OaiuBot {
             try { file = await buildDocument(payload); }
             catch {
               this.store.exec('DELETE FROM outbox WHERE id=?', row.id);
-              this.store.send(row.chat_id, 'Не удалось собрать документ. Готовый текст сохранён — можно скачать TXT или повторить экспорт.');
+              this.store.send(row.chat_id, 'Құжат жасау мүмкін болмады. Дайын мәтін сақталды — TXT жүктеуге немесе қайта жүктеп алуға болады.');
               continue;
             }
             form.set('document', new Blob([file.bytes], { type: file.mime }), file.filename);
@@ -274,7 +274,7 @@ export class OaiuBot {
         else if (![400, 401, 403, 404, 413].includes(error.status) && (job.failures || 0) < 7) this.store.updateJob(chat, job.id, { failures: (job.failures || 0) + 1, next_at: Date.now() + Math.min(300000, 5000 * 2 ** (job.failures || 0)) });
         else {
           this.store.cancel(chat);
-          this.store.send(chat, [401, 403].includes(error.status) ? 'Не удалось получить текст: владельцу нужно проверить API-ключ и доступ к модели.' : [400, 404, 413].includes(error.status) ? 'Не удалось получить текст: владельцу нужно проверить настройки модели.' : 'Не удалось получить текст. Задание и последний черновик сохранены.', RETRY_BUTTONS);
+          this.store.send(chat, [401, 403].includes(error.status) ? 'Мәтінді алу мүмкін болмады: иесі API кілтін және модельге қолжетімділікті тексеруі керек.' : [400, 404, 413].includes(error.status) ? 'Мәтінді алу мүмкін болмады: иесі модель баптауларын тексеруі керек.' : 'Мәтінді алу мүмкін болмады. Тапсырма мен соңғы нобай сақталды.', RETRY_BUTTONS);
         }
       }
       await this.flushOutbox();

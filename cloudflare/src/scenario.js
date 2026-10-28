@@ -26,23 +26,44 @@ export const STAGES = {
 const localized = (s, list) => list[s.language === 'kk' ? 1 : s.language === 'en' ? 2 : 0];
 const btn = (text, callback_data) => ({ text, callback_data });
 export const validMinutes = n => Number.isInteger(n) && n >= 15 && n <= 480;
-export function parseDuration(text) {
+function durationValue(text) {
   text = String(text).trim().toLowerCase().replace(',', '.');
   const clock = text.match(/^(\d{1,2}):([0-5]\d)$/);
   let result;
   if (clock) result = Number(clock[1]) * 60 + Number(clock[2]);
   else {
     const hours = text.match(/^(\d+(?:\.\d+)?)\s*(?:ч(?:ас(?:а|ов)?)?\.?|сағат(?:тық)?|h(?:ours?)?)(?:\s+(\d+)\s*(?:мин(?:ут[а-я]*)?|минут|m(?:in)?))?$/u);
-    const minutes = text.match(/^(\d+)\s*(?:мин(?:ут[а-я]*)?\.?|минут|m(?:in(?:utes?)?)?)?$/u);
+    const minutes = text.match(/^(\d+)\s*(?:мин(?:ут[а-я]*)?\.?|минут|m(?:in(?:utes?|s)?)?)?$/u);
     if (hours) result = Number(hours[1]) * 60 + Number(hours[2] || 0);
     else if (minutes) result = Number(minutes[1]);
   }
+  return Number.isInteger(result) && result > 0 ? result : null;
+}
+export function parseDuration(text) {
+  const result = durationValue(text);
   return validMinutes(result) ? result : null;
 }
-export function mentionedDuration(text) {
-  const match = String(text).match(/(\d+(?:[.,]\d+)?)\s*(сағат(?:тық)?|час(?:а|ов)?|hours?|минут[а-я]*|мин\.?|minutes?)/iu);
+function durationMention(text) {
+  const match = String(text).match(/\d+(?:[.,]\d+)?\s*(?:сағат(?:тық)?|час(?:а|ов)?|hours?)(?:\s+\d+\s*(?:минут[а-я]*|мин\.?|min(?:utes?|s)?))?|\d+\s*(?:минут[а-я]*|мин\.?|min(?:utes?|s)?)/iu);
   if (!match || /через\s*$/iu.test(text.slice(0, match.index)) || /^(?:тан|тен|дан|ден)?\s*кейін/u.test(text.slice(match.index + match[0].length))) return null;
-  return parseDuration(match[1] + ' ' + match[2]);
+  return { minutes: durationValue(match[0]), before: text.slice(0, match.index), after: text.slice(match.index + match[0].length) };
+}
+export function mentionedDuration(text) {
+  const minutes = durationMention(String(text))?.minutes;
+  return validMinutes(minutes) ? minutes : null;
+}
+function changedDuration(session, instruction) {
+  const mention = durationMention(instruction);
+  if (!mention?.minutes) return null;
+  const { minutes, before, after } = mention;
+  const decrease = /сократ|уменьш|қысқарт|азайт|shorten|reduce|decrease|cut/iu.test(instruction);
+  const increase = /увелич|продл|растян|добав|ұзарт|арттыр|extend|increase|lengthen|add/iu.test(instruction);
+  const absolute = /(?:до|to|at)\s*$/iu.test(before) || /^\s*(?:қа|ке|ға|ге)?\s*дейін/iu.test(after);
+  const relative = !absolute && (/(?:на|by)\s*$/iu.test(before) || /^\s*(?:қа|ке|ға|ге)(?:\s|$|[,.;!?])/iu.test(after)
+    || /(?:add|cut)\s*$/iu.test(before));
+  if (relative && (decrease || increase)) return validMinutes(session.event_minutes) ? session.event_minutes + (decrease ? -minutes : minutes) : null;
+  if (/на\s+\d|сделай|сократ|уменьш|увелич|продл|растян|длительност|ұзақты|сағаттық|ұзарт|қысқарт|азайт|арттыр|duration|length|shorten|reduce|decrease|extend|increase|make/iu.test(instruction)) return minutes;
+  return null;
 }
 export function parseStart(text) {
   const match = String(text).trim().match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
@@ -53,12 +74,8 @@ export function inferPreset(text) {
 }
 export function scenarioChange(session, instruction) {
   if (!isScenario(session) || !instruction) return session;
-  const changed = { ...session }, minutes = mentionedDuration(instruction);
-  if (minutes && /на\s+\d|сделай|сократи|уменьши|растяни|длительност|ұзақты|сағаттық|ұзарт|қысқарт|duration|length/iu.test(instruction)) {
-    const delta = /(?:сократи|уменьши)[^.!?\n]{0,20}\sна\s+\d/iu.test(instruction);
-    const result = delta && validMinutes(session.event_minutes) ? session.event_minutes - minutes : minutes;
-    if (validMinutes(result)) Object.assign(changed, withProgramDuration(changed, result) || {});
-  }
+  const changed = { ...session }, minutes = changedDuration(session, instruction);
+  if (validMinutes(minutes)) Object.assign(changed, withProgramDuration(changed, minutes) || {});
   const time = instruction.match(/(?:^|\s)(\d{1,2}:\d{2})(?:\s|$|[.,])/u);
   if (time && /начал|бастал|start/iu.test(instruction) && parseStart(time[1]) !== null) changed.event_start = parseStart(time[1]);
   const hosts = instruction.match(/([1-4])\s*(?:ведущ|жүргізуш|hosts?)/iu);
@@ -156,6 +173,33 @@ export function scriptStructurePrompt(session) {
   return `Верни JSON по схеме. Для каждого из ${timeline(session).length} блоков дай index (с нуля) и lines с host_1${(session.host_count || 2) > 1 ? ` ... host_${session.host_count || 2}` : ''}. Қазақша мәтін табиғи әрі сауатты болсын: «жарысына», «бас төреші», «марапаттарды табыстайды» сияқты дұрыс тіркестерді қолдан. Әңгіме волейбол жарысы туралы болса, «жарығына» не «тапсырыс береді» деп жазба. Каждый ведущий говорит коротко: 1–2 предложения, обычно 10–25 слов, на языке задания. Только произносимые реплики, без подписи «Ведущий», тайминга, Markdown, действий, маршрутов, световых эффектов, оборудования и технических списков внутри реплик. Подписи ведущих, точные интервалы, сценические ремарки, приглашение выбранных руководителей с ФИО, техплан и план Б будут добавлены отдельно программой. Поэтому не приглашай выбранных руководителей повторно и не дублируй их имена. Не выдумывай количество команд/участников/матчей, названия, победителей, подарки, оборудование или результаты. Неизвестное обозначай короткими понятными плейсхолдерами. В матчевом блоке достаточно объявления начала и следующего перехода; не озвучивай технические инструкции зрителям.`;
 }
 
+const PRIZE_TYPES = { medals: /медал|medal/iu, cups: /куб(?:ок|ог|к)|\bcups?\b/iu, trophies: /троф|troph/iu };
+function factEvidence(session) {
+  return [session.brief || '', ...(Array.isArray(session.event_fact_evidence) ? session.event_fact_evidence.filter(value => typeof value === 'string') : []), session.pending_instruction || ''];
+}
+function removedPrize(clause) {
+  return /(?:без|нет|не\s+(?:будет|нуж[ен]|вруч|добав|выда|дар|использ|упомин)|убер|убра|удал|исключ|отмен|remove|omit|exclude|without|\bno\b|do\s+not|don['’]t|қоспа|алып\s+таста|болмай|берілмей|табысталмай|жоқ)/iu.test(clause);
+}
+function validPrizeState(state) {
+  return state?.version === 1 && Object.keys(PRIZE_TYPES).every(key => typeof state[key] === 'boolean');
+}
+function applyPrizeEvidence(state, evidence) {
+  for (const clause of evidence.split(/[.!?;\n]|,\s+/u)) {
+    for (const [key, type] of Object.entries(PRIZE_TYPES)) {
+      if (type.test(clause)) state[key] = !removedPrize(clause);
+      else if (/наград|марапат|awards?|prizes?/iu.test(clause) && removedPrize(clause)) state[key] = false;
+    }
+  }
+}
+export function updateConfirmedPrizes(session, instruction = null) {
+  if (!isScenario(session)) return session;
+  const exists = validPrizeState(session.confirmed_prizes);
+  const state = { version: 1, ...Object.fromEntries(Object.keys(PRIZE_TYPES).map(key => [key, exists ? session.confirmed_prizes[key] : false])) };
+  if (!exists) for (const evidence of factEvidence(session)) applyPrizeEvidence(state, evidence);
+  if (typeof instruction === 'string' && instruction) applyPrizeEvidence(state, instruction);
+  return { ...session, confirmed_prizes: state };
+}
+
 export function renderStructuredScenario(session, data) {
   const plan = timeline(session), count = session.host_count || 2;
   if (!data || !Array.isArray(data.blocks) || data.blocks.length !== plan.length) throw new TypeError('Incomplete script');
@@ -172,10 +216,10 @@ export function renderStructuredScenario(session, data) {
     const cue = match ? choose(session, 'Во время игры ведущие остаются за пределами игровой зоны. Переход объявляют после сигнала судьи.', 'Ойын кезінде жүргізушілер ойын алаңынан тыс тұрады. Келесі кезеңді төреші белгі бергеннен кейін хабарлайды.', 'During play, hosts remain outside the playing area. Announce transitions after the official signal.')
       : gym ? direction : choose(session, `Ремарка: ${direction} Реплики произносятся в согласованной центральной точке; проходы свободны.`, `Ремарка: ${direction} Репликалар келісілген орталық орында айтылады; өту жолы бос қалады.`, `Stage cue: ${direction} Deliver lines at the agreed center position; keep access clear.`);
     const lines = Array.from({ length: count }, (_, n) => `${hostLabel(n + 1)}: ${plain(block.lines[`host_${n + 1}`])}`);
-    const facts = (session.brief || '') + '\n' + (session.pending_instruction || '');
-    const prizes = /медал|кубо[кч]|кубк|троф|medal|troph|\bcups?\b/iu;
-    if (/Награжд|Марапат|Awards/iu.test(row.title) && !prizes.test(facts)) {
-      lines.forEach((line, n) => { if (prizes.test(line)) lines[n] = `${hostLabel(n + 1)}: ` + choose(session, '[Награждающий] вручает [согласованные награды]. Поздравляем участников!', '[Марапаттаушы] [келісілген марапаттарды] табыстайды. Қатысушыларды құттықтаймыз!', '[Presenter] presents [confirmed awards]. Congratulations to the participants!'); });
+    const facts = factEvidence(session).join('\n');
+    if (/Награжд|Марапат|Awards/iu.test(row.title)) {
+      const confirmed = updateConfirmedPrizes(session).confirmed_prizes;
+      lines.forEach((line, n) => { if (Object.entries(PRIZE_TYPES).some(([key, type]) => type.test(line) && !confirmed[key])) lines[n] = `${hostLabel(n + 1)}: ` + choose(session, '[Награждающий] вручает [согласованные награды]. Поздравляем участников!', '[Марапаттаушы] [келісілген марапаттарды] табыстайды. Қатысушыларды құттықтаймыз!', '[Presenter] presents [confirmed awards]. Congratulations to the participants!'); });
     }
     if (/Резерв|Үзіліс|Break|Buffer/iu.test(row.title) && !/тур|раунд|round/iu.test(facts)) {
       lines.forEach((line, n) => { if (/втор|екінші|second|следующ.*матч|келесі.*матч/iu.test(line)) lines[n] = `${hostLabel(n + 1)}: ` + choose(session, 'Сделаем перерыв. Следующий блок объявим по сигналу организатора.', 'Үзіліс жасаймыз. Ұйымдастырушы белгі бергенде келесі бөлімді хабарлаймыз.', 'We will take a break and announce the next segment on the organizers signal.'); });
@@ -211,6 +255,8 @@ export function structuredScenarioData(session, data) {
   return snapshot.script_data;
 }
 
+const interfaceText = (_session, _ru, kk) => kk;
+
 export const PROGRAM_LIBRARY = {
   anthem: ['Гимн', 'Әнұран', 'Anthem'],
   welcome: ['Слово ректора', 'Ректордың құттықтауы', 'Rector address'],
@@ -243,29 +289,29 @@ export function showProgram(store, chat, session) {
   if (!blocks.length) { showDuration(store, chat, session); return; }
   session = { ...session, program_blocks: blocks, event_minutes: programTotal(blocks), step: 'program_list', program_revision: crypto.randomUUID().slice(0, 8) };
   store.put(chat, session);
-  const buttons = blocks.map((block, index) => [btn(`${index + 1}. ${localized(session, block.titles).slice(0, 36)} · ${block.minutes} ${choose(session, 'мин', 'мин', 'min')}`, programCallback(session, 'view', block.id))]);
-  if (approvedProgramSamples(store).length) buttons.push([btn(choose(session, '📚 Образцы владельца', '📚 Иесінің үлгілері', '📚 Owner templates'), programCallback(session, 'samples'))]);
-  buttons.push([btn(choose(session, '➕ Добавить блок', '➕ Бөлім қосу', '➕ Add segment'), programCallback(session, 'add'))]);
-  buttons.push([btn(choose(session, '✅ Сохранить программу', '✅ Бағдарламаны сақтау', '✅ Save program'), programCallback(session, 'done'))]);
-  buttons.push([btn(choose(session, '↩️ Отменить изменения', '↩️ Өзгерістерді қайтару', '↩️ Discard changes'), programCallback(session, 'cancel'))]);
-  store.send(chat, choose(session, '🧩 Конструктор программы', '🧩 Бағдарлама құрастыру', '🧩 Program builder') + ` · ${session.event_minutes} ${choose(session, 'мин', 'минут', 'minutes')}\n\n`
-    + choose(session, 'Выберите блок: можно изменить время, название, порядок или удалить его. При добавлении и удалении общая длительность пересчитывается. Всего 1–16 блоков и 15–480 минут.', 'Бөлімді таңдаңыз: уақытын, атауын, ретін өзгертуге не өшіруге болады. Қосу мен өшіру жалпы уақытты өзгертеді. 1–16 бөлім, барлығы 15–480 минут.', 'Select a segment to change its time, title or order, or remove it. Adding and removing segments changes the total duration. Use 1–16 segments and 15–480 minutes overall.'), buttons);
+  const buttons = blocks.map((block, index) => [btn(`${index + 1}. ${block.titles[1].slice(0, 36)} · ${block.minutes} ${interfaceText(session, 'мин', 'мин', 'min')}`, programCallback(session, 'view', block.id))]);
+  if (approvedProgramSamples(store).length) buttons.push([btn(interfaceText(session, '📚 Образцы владельца', '📚 Иесінің үлгілері', '📚 Owner templates'), programCallback(session, 'samples'))]);
+  buttons.push([btn(interfaceText(session, '➕ Добавить блок', '➕ Бөлім қосу', '➕ Add segment'), programCallback(session, 'add'))]);
+  buttons.push([btn(interfaceText(session, '✅ Сохранить программу', '✅ Бағдарламаны сақтау', '✅ Save program'), programCallback(session, 'done'))]);
+  buttons.push([btn(interfaceText(session, '↩️ Отменить изменения', '↩️ Өзгерістерді қайтару', '↩️ Discard changes'), programCallback(session, 'cancel'))]);
+  store.send(chat, interfaceText(session, '🧩 Конструктор программы', '🧩 Бағдарлама құрастыру', '🧩 Program builder') + ` · ${session.event_minutes} ${interfaceText(session, 'мин', 'минут', 'minutes')}\n\n`
+    + interfaceText(session, 'Выберите блок: можно изменить время, название, порядок или удалить его. При добавлении и удалении общая длительность пересчитывается. Всего 1–16 блоков и 15–480 минут.', 'Бөлімді таңдаңыз: уақытын, атауын, ретін өзгертуге не өшіруге болады. Қосу мен өшіру жалпы уақытты өзгертеді. 1–16 бөлім, барлығы 15–480 минут.', 'Select a segment to change its time, title or order, or remove it. Adding and removing segments changes the total duration. Use 1–16 segments and 15–480 minutes overall.'), buttons);
 }
 function showProgramBlock(store, chat, session, block) {
   session = { ...session, step: 'program_block', program_selected: block.id, program_revision: crypto.randomUUID().slice(0, 8) };
   store.put(chat, session);
   const cb = action => programCallback(session, action, block.id);
-  store.send(chat, `${localized(session, block.titles)} · ${block.minutes} ${choose(session, 'мин', 'минут', 'minutes')}`, [
-    [btn(choose(session, '⏱ Время блока', '⏱ Бөлім уақыты', '⏱ Duration'), cb('time')), btn(choose(session, '✏️ Название', '✏️ Атауы', '✏️ Rename'), cb('rename'))],
-    [btn(choose(session, '⬆️ Выше', '⬆️ Жоғары', '⬆️ Move up'), cb('up')), btn(choose(session, '⬇️ Ниже', '⬇️ Төмен', '⬇️ Move down'), cb('down'))],
-    [btn(choose(session, '🗑 Удалить блок', '🗑 Бөлімді өшіру', '🗑 Remove segment'), cb('remove'))],
-    [btn(choose(session, '⬅️ К программе', '⬅️ Бағдарламаға', '⬅️ Back to program'), programCallback(session, 'back'))],
+  store.send(chat, `${block.titles[1]} · ${block.minutes} ${interfaceText(session, 'мин', 'минут', 'minutes')}`, [
+    [btn(interfaceText(session, '⏱ Время блока', '⏱ Бөлім уақыты', '⏱ Duration'), cb('time')), btn(interfaceText(session, '✏️ Название', '✏️ Атауы', '✏️ Rename'), cb('rename'))],
+    [btn(interfaceText(session, '⬆️ Выше', '⬆️ Жоғары', '⬆️ Move up'), cb('up')), btn(interfaceText(session, '⬇️ Ниже', '⬇️ Төмен', '⬇️ Move down'), cb('down'))],
+    [btn(interfaceText(session, '🗑 Удалить блок', '🗑 Бөлімді өшіру', '🗑 Remove segment'), cb('remove'))],
+    [btn(interfaceText(session, '⬅️ К программе', '⬅️ Бағдарламаға', '⬅️ Back to program'), programCallback(session, 'back'))],
   ]);
 }
 export function handleProgram(dialogue, chat, text, callback) {
   const store = dialogue.store; let session = store.get(chat);
   if (!callback.startsWith('program:') && !session.step?.startsWith('program_')) return false;
-  if (!isScenario(session)) { store.send(chat, choose(session, 'Конструктор доступен для сценария: /new', 'Құрастыру сценарий үшін қолжетімді: /new', 'Choose Script to use the program builder: /new')); return true; }
+  if (!isScenario(session)) { store.send(chat, interfaceText(session, 'Конструктор доступен для сценария: /new', 'Құрастыру сценарий үшін қолжетімді: /new', 'Choose Script to use the program builder: /new')); return true; }
   if (callback === 'program:open') {
     store.cancel(chat);
     const next = { ...session, script_editing: Boolean(session.result) || session.script_editing };
@@ -274,11 +320,11 @@ export function handleProgram(dialogue, chat, text, callback) {
   }
   const [, action, revision, blockId] = callback.split(':');
   if (callback && (!session.step?.startsWith('program_') || !revision || revision !== session.program_revision)) {
-    store.send(chat, choose(session, 'Эта кнопка устарела. Откройте текущую программу заново.', 'Бұл батырма ескірді. Қазіргі бағдарламаны қайта ашыңыз.', 'This button is outdated. Reopen the current program.'), [[btn(choose(session, '🧩 Программа', '🧩 Бағдарлама', '🧩 Program'), 'program:open')]]); return true;
+    store.send(chat, interfaceText(session, 'Эта кнопка устарела. Откройте текущую программу заново.', 'Бұл батырма ескірді. Қазіргі бағдарламаны қайта ашыңыз.', 'This button is outdated. Reopen the current program.'), [[btn(interfaceText(session, '🧩 Программа', '🧩 Бағдарлама', '🧩 Program'), 'program:open')]]); return true;
   }
   const blocks = programBlocks(session), index = blocks.findIndex(block => block.id === (blockId || session.program_selected)), block = blocks[index];
   const back = () => showProgram(store, chat, session);
-  const invalidTotal = () => store.send(chat, choose(session, 'Изменение не сохранено: нужны 1–16 блоков, каждый от 1 минуты, общая длительность 15–480 минут.', 'Өзгеріс сақталмады: 1–16 бөлім, әрқайсысы кемінде 1 минут, барлығы 15–480 минут болуы керек.', 'Change not saved: use 1–16 segments, at least 1 minute each, and 15–480 minutes overall.'));
+  const invalidTotal = () => store.send(chat, interfaceText(session, 'Изменение не сохранено: нужны 1–16 блоков, каждый от 1 минуты, общая длительность 15–480 минут.', 'Өзгеріс сақталмады: 1–16 бөлім, әрқайсысы кемінде 1 минут, барлығы 15–480 минут болуы керек.', 'Change not saved: use 1–16 segments, at least 1 minute each, and 15–480 minutes overall.'));
   if (callback) {
     if (action === 'back') { back(); return true; }
     if (action === 'done' || action === 'cancel') {
@@ -295,7 +341,7 @@ export function handleProgram(dialogue, chat, text, callback) {
     if (action === 'samples') {
       const samples = approvedProgramSamples(store);
       session = { ...session, step: 'program_samples', program_revision: crypto.randomUUID().slice(0, 8) }; store.put(chat, session);
-      store.send(chat, choose(session, 'Выберите образец. Он заменит блоки текущей программы; общая длительность сохранится.', 'Үлгі таңдаңыз. Ол қазіргі бөлімдерді ауыстырады; жалпы уақыт сақталады.', 'Choose a template. It replaces the current segments and keeps the total duration.'), [...samples.map(sample => [btn(sample.title.slice(0, 50), programCallback(session, 'use', sample.id))]), [btn(choose(session, '⬅️ Назад', '⬅️ Артқа', '⬅️ Back'), programCallback(session, 'back'))]]); return true;
+      store.send(chat, interfaceText(session, 'Выберите образец. Он заменит блоки текущей программы; общая длительность сохранится.', 'Үлгі таңдаңыз. Ол қазіргі бөлімдерді ауыстырады; жалпы уақыт сақталады.', 'Choose a template. It replaces the current segments and keeps the total duration.'), [...samples.map(sample => [btn(sample.title.slice(0, 50), programCallback(session, 'use', sample.id))]), [btn(interfaceText(session, '⬅️ Назад', '⬅️ Артқа', '⬅️ Back'), programCallback(session, 'back'))]]); return true;
     }
     if (action === 'use' && session.step === 'program_samples') {
       const sample = approvedProgramSamples(store).find(sample => sample.id === blockId);
@@ -309,10 +355,10 @@ export function handleProgram(dialogue, chat, text, callback) {
     if (action === 'add') {
       if (blocks.length >= MAX_PROGRAM_BLOCKS) { invalidTotal(); return true; }
       session = { ...session, step: 'program_add', program_revision: crypto.randomUUID().slice(0, 8) }; store.put(chat, session);
-      store.send(chat, choose(session, 'Что добавить? Готовый блок занимает 5 минут; затем время можно изменить.', 'Не қосамыз? Дайын бөлім 5 минут болады; уақытын кейін өзгерте аласыз.', 'What would you like to add? A suggested segment starts at 5 minutes; you can change it afterwards.'), [
-        ...Object.entries(PROGRAM_LIBRARY).map(([key, titles]) => [btn(localized(session, titles), programCallback(session, 'pick', key))]),
-        [btn(choose(session, '✍️ Свой блок', '✍️ Өз бөлімім', '✍️ Custom segment'), programCallback(session, 'custom'))],
-        [btn(choose(session, '⬅️ Назад', '⬅️ Артқа', '⬅️ Back'), programCallback(session, 'back'))],
+      store.send(chat, interfaceText(session, 'Что добавить? Готовый блок занимает 5 минут; затем время можно изменить.', 'Не қосамыз? Дайын бөлім 5 минут болады; уақытын кейін өзгерте аласыз.', 'What would you like to add? A suggested segment starts at 5 minutes; you can change it afterwards.'), [
+        ...Object.entries(PROGRAM_LIBRARY).map(([key, titles]) => [btn(titles[1], programCallback(session, 'pick', key))]),
+        [btn(interfaceText(session, '✍️ Свой блок', '✍️ Өз бөлімім', '✍️ Custom segment'), programCallback(session, 'custom'))],
+        [btn(interfaceText(session, '⬅️ Назад', '⬅️ Артқа', '⬅️ Back'), programCallback(session, 'back'))],
       ]); return true;
     }
     if (action === 'pick' && session.step === 'program_add' && Object.hasOwn(PROGRAM_LIBRARY, blockId)) {
@@ -321,7 +367,7 @@ export function handleProgram(dialogue, chat, text, callback) {
     }
     if (action === 'custom' && session.step === 'program_add') {
       store.put(chat, { ...session, step: 'program_add_custom', program_revision: crypto.randomUUID().slice(0, 8) });
-      store.send(chat, choose(session, 'Напишите название и минуты через точку с запятой: «Танец студентов; 7». Название до 100 символов. «Назад» — вернуться.', 'Атауы мен минут санын нүктелі үтірмен бөліңіз: «Студенттер биі; 7». Атауы 100 таңбаға дейін. «Артқа» — қайту.', 'Send title; minutes, for example Student dance; 7. Title up to 100 characters. Send Back to return.')); return true;
+      store.send(chat, interfaceText(session, 'Напишите название и минуты через точку с запятой: «Танец студентов; 7». Название до 100 символов. «Назад» — вернуться.', 'Атауы мен минут санын нүктелі үтірмен бөліңіз: «Студенттер биі; 7». Атауы 100 таңбаға дейін. «Артқа» — қайту.', 'Send title; minutes, for example Student dance; 7. Title up to 100 characters. Send Back to return.')); return true;
     }
     if (action === 'view' && block) { showProgramBlock(store, chat, session, block); return true; }
     if (!block || session.step !== 'program_block' || block.id !== session.program_selected) return true;
@@ -334,7 +380,7 @@ export function handleProgram(dialogue, chat, text, callback) {
     if (action === 'remove') { if (!saveProgram(store, chat, session, blocks.filter(item => item.id !== block.id))) invalidTotal(); return true; }
     if (action === 'time' || action === 'rename') {
       store.put(chat, { ...session, step: action === 'time' ? 'program_time' : 'program_rename', program_revision: crypto.randomUUID().slice(0, 8) });
-      store.send(chat, action === 'time' ? choose(session, 'Сколько минут длится этот блок? Введите целое число от 1 до 480. «Назад» — вернуться.', 'Бұл бөлім неше минут? 1–480 аралығында бүтін сан жазыңыз. «Артқа» — қайту.', 'How many minutes for this segment? Enter a whole number from 1 to 480. Send Back to return.') : choose(session, 'Напишите новое название (до 100 символов). «Назад» — вернуться.', 'Жаңа атауын жазыңыз (100 таңбаға дейін). «Артқа» — қайту.', 'Send a new title, up to 100 characters. Send Back to return.')); return true;
+      store.send(chat, action === 'time' ? interfaceText(session, 'Сколько минут длится этот блок? Введите целое число от 1 до 480. «Назад» — вернуться.', 'Бұл бөлім неше минут? 1–480 аралығында бүтін сан жазыңыз. «Артқа» — қайту.', 'How many minutes for this segment? Enter a whole number from 1 to 480. Send Back to return.') : interfaceText(session, 'Напишите новое название (до 100 символов). «Назад» — вернуться.', 'Жаңа атауын жазыңыз (100 таңбаға дейін). «Артқа» — қайту.', 'Send a new title, up to 100 characters. Send Back to return.')); return true;
     }
     return true;
   }
@@ -342,7 +388,7 @@ export function handleProgram(dialogue, chat, text, callback) {
   if (/^(готово|дайын|done)$/iu.test(text.trim()) && session.step === 'program_list') { showSettings(store, chat, cleanProgramUi(session)); return true; }
   if (session.step === 'program_add_custom') {
     const parts = text.trim().split(';').map(value => value.trim());
-    if (parts.length !== 2 || !/^\d{1,3}$/.test(parts[1])) { store.send(chat, choose(session, 'Формат: название; минуты. Например: Танец студентов; 7', 'Үлгі: атауы; минут саны. Мысалы: Студенттер биі; 7', 'Use title; minutes. For example: Student dance; 7')); return true; }
+    if (parts.length !== 2 || !/^\d{1,3}$/.test(parts[1])) { store.send(chat, interfaceText(session, 'Формат: название; минуты. Например: Танец студентов; 7', 'Үлгі: атауы; минут саны. Мысалы: Студенттер биі; 7', 'Use title; minutes. For example: Student dance; 7')); return true; }
     const next = [...blocks, { id: crypto.randomUUID().slice(0, 8), titles: Array(3).fill(parts[0]), minutes: Number(parts[1]) }];
     if (!saveProgram(store, chat, session, next)) invalidTotal(); return true;
   }
@@ -355,30 +401,30 @@ export function handleProgram(dialogue, chat, text, callback) {
     blocks[index] = { ...block, titles: Array(3).fill(text.trim()) };
     if (!saveProgram(store, chat, session, blocks)) invalidTotal(); return true;
   }
-  store.send(chat, choose(session, 'Выберите блок кнопкой. «Готово» — сохранить программу, /cancel — новая задача.', 'Батырмамен бөлімді таңдаңыз. «Дайын» — сақтау, /cancel — жаңа тапсырма.', 'Choose a segment using a button. Done saves the program; /cancel starts a new task.')); return true;
+  store.send(chat, interfaceText(session, 'Выберите блок кнопкой. «Готово» — сохранить программу, /cancel — новая задача.', 'Батырмамен бөлімді таңдаңыз. «Дайын» — сақтау, /cancel — жаңа тапсырма.', 'Choose a segment using a button. Done saves the program; /cancel starts a new task.')); return true;
 }
 
 export function showProfiles(store, chat, session) {
   store.put(chat, { ...session, step: 'event_profile' });
-  store.send(chat, choose(session, 'Какое событие готовим?', 'Қандай іс-шараға сценарий керек?', 'Which event are we planning?'), Object.entries(PRESETS).map(([key, value]) => [btn(localized(session, value.title), `event:profile:${key}`)]));
+  store.send(chat, interfaceText(session, 'Какое событие готовим?', 'Қандай іс-шараға сценарий керек?', 'Which event are we planning?'), Object.entries(PRESETS).map(([key, value]) => [btn(value.title[1], `event:profile:${key}`)]));
 }
 export function showDuration(store, chat, session) {
   store.put(chat, { ...session, step: 'event_duration' });
   const options = [30, 60, 90, 120, 180, 240];
-  const buttons = options.map(n => btn(n < 60 ? `${n} мин` : n % 60 ? '1,5 ' + choose(session, 'часа', 'сағат', 'hours') : `${n / 60} ${choose(session, 'ч', 'сағат', 'hours')}`, `event:duration:${n}`));
-  store.send(chat, choose(session, 'Сколько длится всё мероприятие? Это время программы, а не длина речи.', 'Іс-шара жалпы қанша уақытқа созылады? Бұл жүргізуші сөзінің ұзақтығы емес, бүкіл бағдарлама уақыты.', 'How long is the whole event? This is program time, not speech length.'), [buttons.slice(0, 2), buttons.slice(2, 4), buttons.slice(4), [btn(choose(session, '✍️ Своя длительность', '✍️ Өз уақытым', '✍️ Custom duration'), 'event:duration:custom')]]);
+  const buttons = options.map(n => btn(n < 60 ? `${n} мин` : n % 60 ? '1,5 ' + interfaceText(session, 'часа', 'сағат', 'hours') : `${n / 60} ${interfaceText(session, 'ч', 'сағат', 'hours')}`, `event:duration:${n}`));
+  store.send(chat, interfaceText(session, 'Сколько длится всё мероприятие? Это время программы, а не длина речи.', 'Іс-шара жалпы қанша уақытқа созылады? Бұл жүргізуші сөзінің ұзақтығы емес, бүкіл бағдарлама уақыты.', 'How long is the whole event? This is program time, not speech length.'), [buttons.slice(0, 2), buttons.slice(2, 4), buttons.slice(4), [btn(interfaceText(session, '✍️ Своя длительность', '✍️ Өз уақытым', '✍️ Custom duration'), 'event:duration:custom')]]);
 }
 export function showSettings(store, chat, session) {
   session = { event_preset: 'general', host_count: 2, stage_key: 'right_left', ...session, step: 'event_settings' };
   store.put(chat, session);
-  const title = localized(session, (PRESETS[session.event_preset] || PRESETS.general).title);
-  const time = Number.isInteger(session.event_start) ? clockLabel(session.event_start) : choose(session, 'не указано', 'көрсетілмеген', 'not specified');
-  store.send(chat, `${title}\n${choose(session, 'Длительность', 'Ұзақтығы', 'Duration')}: ${session.event_minutes || '?'} мин\n${choose(session, 'Начало', 'Басталуы', 'Starts')}: ${time}\n${choose(session, 'Ведущих', 'Жүргізуші саны', 'Hosts')}: ${session.host_count}${session.host_names?.length ? ` · ${session.host_names.join('; ')}` : ''}\n${stageDescription(session)}`, [
-    [btn('⏱ ' + choose(session, 'Длительность', 'Ұзақтығы', 'Duration'), 'event:duration'), btn('🕓 ' + choose(session, 'Начало', 'Басталуы', 'Start time'), 'event:start')],
-    [btn('🎙 ' + choose(session, 'Ведущие', 'Жүргізушілер', 'Hosts'), 'event:hosts'), btn('✍️ ' + choose(session, 'Имена ведущих', 'Жүргізушілердің аты', 'Host names'), 'event:names')],
-    [btn('↔️ ' + choose(session, 'Выход и уход', 'Шығу және түсу', 'Entry and exit'), 'event:stage'), btn('🎭 ' + choose(session, 'Тип события', 'Іс-шара түрі', 'Event type'), 'event:profiles')],
-    [btn('🧩 ' + choose(session, 'Конструктор программы', 'Бағдарлама құрастыру', 'Program builder'), 'program:open')],
-    [btn(session.script_editing ? choose(session, '✅ Применить к сценарию', '✅ Сценарийді жаңарту', '✅ Apply to script') : choose(session, '✅ Продолжить', '✅ Жалғастыру', '✅ Continue'), 'event:ready')],
+  const title = (PRESETS[session.event_preset] || PRESETS.general).title[1];
+  const time = Number.isInteger(session.event_start) ? clockLabel(session.event_start) : interfaceText(session, 'не указано', 'көрсетілмеген', 'not specified');
+  store.send(chat, `${title}\n${interfaceText(session, 'Длительность', 'Ұзақтығы', 'Duration')}: ${session.event_minutes || '?'} минут\n${interfaceText(session, 'Начало', 'Басталуы', 'Starts')}: ${time}\n${interfaceText(session, 'Ведущих', 'Жүргізуші саны', 'Hosts')}: ${session.host_count}${session.host_names?.length ? ` · ${session.host_names.join('; ')}` : ''}\n${stageDescription({ ...session, language: 'kk' })}`, [
+    [btn('⏱ ' + interfaceText(session, 'Длительность', 'Ұзақтығы', 'Duration'), 'event:duration'), btn('🕓 ' + interfaceText(session, 'Начало', 'Басталуы', 'Start time'), 'event:start')],
+    [btn('🎙 ' + interfaceText(session, 'Ведущие', 'Жүргізушілер', 'Hosts'), 'event:hosts'), btn('✍️ ' + interfaceText(session, 'Имена ведущих', 'Жүргізушілердің аты', 'Host names'), 'event:names')],
+    [btn('↔️ ' + interfaceText(session, 'Выход и уход', 'Шығу және түсу', 'Entry and exit'), 'event:stage'), btn('🎭 ' + interfaceText(session, 'Тип события', 'Іс-шара түрі', 'Event type'), 'event:profiles')],
+    [btn('🧩 ' + interfaceText(session, 'Конструктор программы', 'Бағдарлама құрастыру', 'Program builder'), 'program:open')],
+    [btn(session.script_editing ? interfaceText(session, '✅ Применить к сценарию', '✅ Сценарийді жаңарту', '✅ Apply to script') : interfaceText(session, '✅ Продолжить', '✅ Жалғастыру', '✅ Continue'), 'event:ready')],
   ]);
 }
 
@@ -386,7 +432,7 @@ export function handleScenario(dialogue, chat, text, callback) {
   if (handleProgram(dialogue, chat, text, callback)) return true;
   const store = dialogue.store, session = store.get(chat);
   if (!callback.startsWith('event:') && !session.step?.startsWith('event_')) return false;
-  if (!isScenario(session)) { store.send(chat, choose(session, 'Сначала выберите «Сценарий»: /new', 'Алдымен «Сценарий» таңдаңыз: /new', 'Choose Script first: /new')); return true; }
+  if (!isScenario(session)) { store.send(chat, interfaceText(session, 'Сначала выберите «Сценарий»: /new', 'Алдымен «Сценарий» таңдаңыз: /new', 'Choose Script first: /new')); return true; }
   const [action, value] = callback.slice(6).split(':');
   if (callback) {
     if (action === 'config') { store.cancel(chat); showSettings(store, chat, { ...session, script_editing: Boolean(session.result) }); return true; }
@@ -394,25 +440,25 @@ export function handleScenario(dialogue, chat, text, callback) {
     if (action === 'profile' && Object.hasOwn(PRESETS, value)) { const next = { ...session, event_preset: value }; delete next.program_blocks; delete next.sample_id; delete next.sample_title; validMinutes(next.event_minutes) ? showSettings(store, chat, next) : showDuration(store, chat, next); return true; }
     if (action === 'duration') {
       if (!value) showDuration(store, chat, session);
-      else if (value === 'custom') { store.put(chat, { ...session, step: 'event_duration_custom' }); store.send(chat, choose(session, 'Напишите длительность от 15 минут до 8 часов: «90 минут», «2 часа», «1,5 сағат» или «02:30».', '15 минуттан 8 сағатқа дейінгі ұзақтықты жазыңыз: «90 минут», «2 сағат», «1,5 сағат» не «02:30».', 'Enter 15 minutes to 8 hours, e.g. 90 minutes, 2 hours or 02:30.')); }
-      else if (validMinutes(Number(value))) { const next = withProgramDuration(session, Number(value)); if (next) showSettings(store, chat, next); else store.send(chat, choose(session, 'На каждый блок нужна хотя бы 1 минута. Увеличьте время или удалите блок.', 'Әр бөлімге кемінде 1 минут керек. Уақытты арттырыңыз не бөлімді өшіріңіз.', 'Allow at least 1 minute per segment. Increase the duration or remove a segment.')); }
+      else if (value === 'custom') { store.put(chat, { ...session, step: 'event_duration_custom' }); store.send(chat, interfaceText(session, 'Напишите длительность от 15 минут до 8 часов: «90 минут», «2 часа», «1,5 сағат» или «02:30».', '15 минуттан 8 сағатқа дейінгі ұзақтықты жазыңыз: «90 минут», «2 сағат», «1,5 сағат» не «02:30».', 'Enter 15 minutes to 8 hours, e.g. 90 minutes, 2 hours or 02:30.')); }
+      else if (validMinutes(Number(value))) { const next = withProgramDuration(session, Number(value)); if (next) showSettings(store, chat, next); else store.send(chat, interfaceText(session, 'На каждый блок нужна хотя бы 1 минута. Увеличьте время или удалите блок.', 'Әр бөлімге кемінде 1 минут керек. Уақытты арттырыңыз не бөлімді өшіріңіз.', 'Allow at least 1 minute per segment. Increase the duration or remove a segment.')); }
       return true;
     }
     if (action === 'start') {
       if (value === 'none') showSettings(store, chat, { ...session, event_start: null });
-      else { store.put(chat, { ...session, step: 'event_start' }); store.send(chat, choose(session, 'Во сколько начало? Напишите время по Алматы в формате 14:30.', 'Қай уақытта басталады? Алматы уақытымен жазыңыз: 14:30.', 'What time does it start in Almaty? Use HH:MM, e.g. 14:30.'), [[btn(choose(session, 'Без точного времени', 'Нақты уақытсыз', 'No clock time'), 'event:start:none')]]); }
+      else { store.put(chat, { ...session, step: 'event_start' }); store.send(chat, interfaceText(session, 'Во сколько начало? Напишите время по Алматы в формате 14:30.', 'Қай уақытта басталады? Алматы уақытымен жазыңыз: 14:30.', 'What time does it start in Almaty? Use HH:MM, e.g. 14:30.'), [[btn(interfaceText(session, 'Без точного времени', 'Нақты уақытсыз', 'No clock time'), 'event:start:none')]]); }
       return true;
     }
     if (action === 'hosts') {
       if (['1', '2', '3', '4'].includes(value)) { const next = { ...session, host_count: Number(value) }; if (next.host_names?.length !== next.host_count) delete next.host_names; showSettings(store, chat, next); }
-      else { store.put(chat, { ...session, step: 'event_hosts' }); store.send(chat, choose(session, 'Сколько ведущих?', 'Қанша жүргізуші болады?', 'How many hosts?'), [[1, 2, 3, 4].map(n => btn(String(n), `event:hosts:${n}`))]); }
+      else { store.put(chat, { ...session, step: 'event_hosts' }); store.send(chat, interfaceText(session, 'Сколько ведущих?', 'Қанша жүргізуші болады?', 'How many hosts?'), [[1, 2, 3, 4].map(n => btn(String(n), `event:hosts:${n}`))]); }
       return true;
     }
-    if (action === 'names') { store.put(chat, { ...session, step: 'event_names' }); store.send(chat, choose(session, 'Имена ведущих через точку с запятой, по одному на ведущего: «Сабина; Ернар». Чтобы убрать имена, отправьте «-».', 'Жүргізушілердің атын нүктелі үтірмен бөліңіз: «Сабина; Ернар». Атын өшіру үшін «-» жіберіңіз.', 'Enter host names separated by semicolons, one per host. Send - to remove names.')); return true; }
+    if (action === 'names') { store.put(chat, { ...session, step: 'event_names' }); store.send(chat, interfaceText(session, 'Имена ведущих через точку с запятой, по одному на ведущего: «Сабина; Ернар». Чтобы убрать имена, отправьте «-».', 'Жүргізушілердің атын нүктелі үтірмен бөліңіз: «Сабина; Ернар». Атын өшіру үшін «-» жіберіңіз.', 'Enter host names separated by semicolons, one per host. Send - to remove names.')); return true; }
     if (action === 'stage') {
       if (Object.hasOwn(STAGES, value)) showSettings(store, chat, { ...session, stage_key: value, stage_note: '' });
-      else if (value === 'custom') { store.put(chat, { ...session, step: 'event_stage_custom' }); store.send(chat, choose(session, 'Опишите вход, перемещение и уход (до 500 символов). Укажите стороны с точки зрения зрителей.', 'Шығу, жүру және түсу тәртібін жазыңыз (500 таңбаға дейін). Оң/сол жақ көрерменнің көзімен анықталады.', 'Describe entry, movement and exit in up to 500 characters, from the audience perspective.')); }
-      else { store.put(chat, { ...session, step: 'event_stage' }); store.send(chat, choose(session, 'Стороны сцены — с точки зрения зрителей. Выберите выход и уход.', 'Сахнаның оң/сол жағы көрермен көзімен анықталады. Шығу және түсу бағытын таңдаңыз.', 'Stage sides are from the audience perspective. Choose entry and exit.'), [[btn('➡️ ' + choose(session, 'Справа → слева', 'Оңнан → солға', 'Right → left'), 'event:stage:right_left')], [btn('⬅️ ' + choose(session, 'Слева → справа', 'Солдан → оңға', 'Left → right'), 'event:stage:left_right')], [btn('🏐 ' + choose(session, 'Спортзал без сцены', 'Сахнасыз спортзал', 'Sports hall, no stage'), 'event:stage:gym')], [btn('✍️ ' + choose(session, 'Свой вариант', 'Өз нұсқам', 'Custom'), 'event:stage:custom')]]); }
+      else if (value === 'custom') { store.put(chat, { ...session, step: 'event_stage_custom' }); store.send(chat, interfaceText(session, 'Опишите вход, перемещение и уход (до 500 символов). Укажите стороны с точки зрения зрителей.', 'Шығу, жүру және түсу тәртібін жазыңыз (500 таңбаға дейін). Оң/сол жақ көрерменнің көзімен анықталады.', 'Describe entry, movement and exit in up to 500 characters, from the audience perspective.')); }
+      else { store.put(chat, { ...session, step: 'event_stage' }); store.send(chat, interfaceText(session, 'Стороны сцены — с точки зрения зрителей. Выберите выход и уход.', 'Сахнаның оң/сол жағы көрермен көзімен анықталады. Шығу және түсу бағытын таңдаңыз.', 'Stage sides are from the audience perspective. Choose entry and exit.'), [[btn('➡️ ' + interfaceText(session, 'Справа → слева', 'Оңнан → солға', 'Right → left'), 'event:stage:right_left')], [btn('⬅️ ' + interfaceText(session, 'Слева → справа', 'Солдан → оңға', 'Left → right'), 'event:stage:left_right')], [btn('🏐 ' + interfaceText(session, 'Спортзал без сцены', 'Сахнасыз спортзал', 'Sports hall, no stage'), 'event:stage:gym')], [btn('✍️ ' + interfaceText(session, 'Свой вариант', 'Өз нұсқам', 'Custom'), 'event:stage:custom')]]); }
       return true;
     }
     if (action === 'ready') {
@@ -425,15 +471,15 @@ export function handleScenario(dialogue, chat, text, callback) {
     return true;
   }
   if (session.step === 'event_duration_custom') {
-    const duration = parseDuration(text), next = duration && withProgramDuration(session, duration); if (next) showSettings(store, chat, next); else store.send(chat, choose(session, 'Нужна длительность от 15 минут до 8 часов. Например: 90 минут или 2 часа.', '15 минуттан 8 сағатқа дейінгі уақыт керек. Мысалы: 90 минут не 2 сағат.', 'Enter a duration between 15 minutes and 8 hours.'));
+    const duration = parseDuration(text), next = duration && withProgramDuration(session, duration); if (next) showSettings(store, chat, next); else store.send(chat, interfaceText(session, 'Нужна длительность от 15 минут до 8 часов. Например: 90 минут или 2 часа.', '15 минуттан 8 сағатқа дейінгі уақыт керек. Мысалы: 90 минут не 2 сағат.', 'Enter a duration between 15 minutes and 8 hours.'));
   } else if (session.step === 'event_start') {
-    const start = parseStart(text); if (start !== null) showSettings(store, chat, { ...session, event_start: start }); else store.send(chat, choose(session, 'Формат времени: 14:30, часы от 00 до 23.', 'Уақыт үлгісі: 14:30, сағат 00 мен 23 аралығында.', 'Use HH:MM with hours from 00 to 23.'));
+    const start = parseStart(text); if (start !== null) showSettings(store, chat, { ...session, event_start: start }); else store.send(chat, interfaceText(session, 'Формат времени: 14:30, часы от 00 до 23.', 'Уақыт үлгісі: 14:30, сағат 00 мен 23 аралығында.', 'Use HH:MM with hours from 00 to 23.'));
   } else if (session.step === 'event_names') {
     const names = text === '-' ? [] : text.split(';').map(v => v.trim()).filter(Boolean);
-    if (names.length && (names.length !== (session.host_count || 2) || names.some(n => [...n].length > 80))) store.send(chat, choose(session, 'Число имён должно совпадать с числом ведущих. Разделите их точкой с запятой.', 'Ат саны жүргізуші санына тең болуы керек. Арасына нүктелі үтір қойыңыз.', 'Enter one name per host, separated by semicolons.'));
+    if (names.length && (names.length !== (session.host_count || 2) || names.some(n => [...n].length > 80))) store.send(chat, interfaceText(session, 'Число имён должно совпадать с числом ведущих. Разделите их точкой с запятой.', 'Ат саны жүргізуші санына тең болуы керек. Арасына нүктелі үтір қойыңыз.', 'Enter one name per host, separated by semicolons.'));
     else showSettings(store, chat, { ...session, host_names: names });
   } else if (session.step === 'event_stage_custom') {
-    if (text && [...text].length <= 500) showSettings(store, chat, { ...session, stage_key: 'custom', stage_note: text }); else store.send(chat, choose(session, 'Опишите выход и уход текстом до 500 символов.', 'Шығу мен түсуді 500 таңбаға дейін жазыңыз.', 'Describe entry and exit in up to 500 characters.'));
-  } else store.send(chat, choose(session, 'Выберите настройку кнопкой выше. Начать заново: /new', 'Жоғарыдағы батырмамен таңдаңыз. Жаңадан бастау: /new', 'Choose an option above, or use /new.'));
+    if (text && [...text].length <= 500) showSettings(store, chat, { ...session, stage_key: 'custom', stage_note: text }); else store.send(chat, interfaceText(session, 'Опишите выход и уход текстом до 500 символов.', 'Шығу мен түсуді 500 таңбаға дейін жазыңыз.', 'Describe entry and exit in up to 500 characters.'));
+  } else store.send(chat, interfaceText(session, 'Выберите настройку кнопкой выше. Начать заново: /new', 'Жоғарыдағы батырмамен таңдаңыз. Жаңадан бастау: /new', 'Choose an option above, or use /new.'));
   return true;
 }

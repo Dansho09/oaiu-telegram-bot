@@ -26,8 +26,33 @@ export const PEOPLE = [
 export const choose = (session, ru, kk, en = ru) => session.language === 'kk' ? kk : session.language === 'en' ? en : ru;
 const normalized = value => String(value || '').normalize('NFKC').toLowerCase().replaceAll('ё', 'е');
 const word = (text, prefix) => new RegExp(`(?:^|[^\\p{L}])${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\p{L}*`, 'u').test(text);
+// A rector is one canonical university office. Keep deputies separate even when
+// their position contains the word "rector" in Russian, Kazakh or English.
+export function isRectorRole(role) {
+  const text = String(role || '').normalize('NFKC').toLowerCase();
+  if (/проректор|вице[\s\p{Pd}]*ректор|vice[\s\p{Pd}]*rector|pro[\s\p{Pd}]*rector|deputy[\s\p{Pd}]+rector|ректор[^.;\n]{0,35}орынбасар/u.test(text)) return false;
+  return /(?:^|[^\p{L}])(?:ректор(?:ы|і|а|дың|ының)?|rector)(?=$|[^\p{L}])/u.test(text);
+}
+function confirmedKazakhRole(role) {
+  const text = String(role || '').trim();
+  if (/заведующ|факультета|университета|проректор\s+по|руководител|начальник|rector|dean|head of|vice|academic/iu.test(text)) return '';
+  return /[әғқңөұүһі]/iu.test(text) || /^(?:декан|ректор|проректор)$/iu.test(text) ? text : '';
+}
+export function importedRoleKk(role, previous = {}) {
+  if (isRectorRole(role)) return 'OAIU ректоры';
+  const direct = confirmedKazakhRole(role); if (direct) return direct;
+  const known = PEOPLE.find(person => normalized(person.role) === normalized(role) || normalized(person.roleKk) === normalized(role));
+  if (known) return known.roleKk || '';
+  if ([previous.role, previous.roleKk].some(old => old && normalized(old) === normalized(role))) return confirmedKazakhRole(previous.roleKk);
+  return '';
+}
+export function directoryRoleKk(person) {
+  const verified = importedRoleKk(person.roleKk || '', {}); if (verified) return verified;
+  const translated = importedRoleKk(person.role || '', person); if (translated) return translated;
+  return person.group === 'departments' ? 'Кафедра меңгерушісі' : person.group === 'deans' ? 'Декан' : person.id === 'rector' || isRectorRole(person.role) ? 'OAIU ректоры' : person.group === 'leadership' ? 'Басшылық' : 'Қатысушы';
+}
 export const personName = (person, session) => session.language === 'kk' ? person.nameKk || person.name : person.name;
-export const personRole = (person, session) => session.language === 'kk' ? person.roleKk || person.role : person.role;
+export const personRole = (person, session) => session.language === 'kk' ? directoryRoleKk(person) : person.role;
 export function catalog(store) {
   const overrides = store?.meta('directory_overrides', {}) || {}, extra = store?.meta('directory_extra', []) || [];
   return [...PEOPLE, ...extra].map(person => ({ ...person, ...(overrides[person.id] || {}) }));
@@ -84,12 +109,12 @@ export function showDirectory(store, chat, session, group = 'all') {
   session = snapshotPeople(session, store, true);
   const groups = new Set(['all', 'leadership', 'deans', 'departments']); if (!groups.has(group)) group = 'all';
   const selected = selectedPeople(session);
-  const heading = choose(session, 'Кого указать в тексте? Выберите до 6 человек. Нажатие добавляет или убирает участника.', 'Мәтінге кімді қосамыз? 6 адамға дейін таңдаңыз. Батырманы қайта бассаңыз, адам тізімнен алынады.', 'Who should appear in the text? Select up to 6 people; tap again to remove.');
+  const heading = 'Мәтінге кімді қосамыз? 6 адамға дейін таңдаңыз. Батырманы қайта бассаңыз, адам тізімнен алынады.';
   const all = catalog(store), items = group === 'all' ? all.filter(person => person.id === 'rector') : all.filter(person => person.group === group);
-  const cards = items.map(person => `${personRole(person, session)}\n${personName(person, session)}`).join('\n\n');
-  const selectedLine = selected.length ? '\n\n' + choose(session, 'Выбраны: ', 'Таңдалғандар: ', 'Selected: ') + selected.map(person => personName(person, session)).join('; ') : '';
+  const cards = items.map(person => `${directoryRoleKk(person)}\n${person.nameKk || person.name}`).join('\n\n');
+  const selectedLine = selected.length ? '\n\n' + 'Таңдалғандар: ' + selected.map(person => person.nameKk || person.name).join('; ') : '';
   const rows = items.map(person => [{ text: `${selected.some(p => p.id === person.id) ? '✅ ' : ''}${person.short}`, callback_data: `person:${person.id}` }]);
-  rows.push([{ text: '🎓 Ректор / проректоры', callback_data: 'staff:leadership' }, { text: '🏛 Деканы', callback_data: 'staff:deans' }], [{ text: '📚 Кафедры', callback_data: 'staff:departments' }, { text: '✍️ Свой участник', callback_data: 'staff:custom' }], [{ text: choose(session, '✅ Продолжить', '✅ Жалғастыру', '✅ Continue'), callback_data: 'staff:done' }, { text: choose(session, 'Без участников', 'Адам қоспау', 'No participants'), callback_data: 'staff:none' }]);
+  rows.push([{ text: '🎓 Ректор / проректорлар', callback_data: 'staff:leadership' }, { text: '🏛 Декандар', callback_data: 'staff:deans' }], [{ text: '📚 Кафедралар', callback_data: 'staff:departments' }, { text: '✍️ Өз қатысушым', callback_data: 'staff:custom' }], [{ text: '✅ Жалғастыру', callback_data: 'staff:done' }, { text: 'Адам қоспау', callback_data: 'staff:none' }]);
   store.put(chat, { ...session, directory_group: group });
   store.send(chat, `${heading}\n\n${cards}${selectedLine}`, rows);
 }

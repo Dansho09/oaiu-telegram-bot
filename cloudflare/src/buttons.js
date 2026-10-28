@@ -1,4 +1,4 @@
-import { catalog } from './directory.js';
+import { catalog, directoryRoleKk } from './directory.js';
 import { PRESETS, PROGRAM_LIBRARY } from './scenario.js';
 
 // Interface language is independent of the language requested for generated text.
@@ -54,12 +54,7 @@ function personCaption(id, session, store, selected) {
   const name = String(person.nameKk || person.name || '').trim().split(/\s+/u);
   const initials = name.slice(1).map(part => [...part][0] + '.').join(' ');
   const shortName = [name[0], initials].filter(Boolean).join(' ');
-  let role = String(person.roleKk || '').replace(/\s+кафедрасының меңгерушісі$/u, '').replace(/\s+факультетінің деканы$/u, ' деканы');
-  // Uploaded role names are user data; if no Kazakh translation is available,
-  // keep the verified name and display the Kazakh category rather than a Russian UI role.
-  if (!role || /заведующ|проректор по|декан факультета|декан .*факультета|руководител|начальник|head of|dean of|rector of/iu.test(role)) {
-    role = person.group === 'departments' ? 'Кафедра меңгерушісі' : person.group === 'deans' ? 'Декан' : person.id === 'rector' ? 'Ректор' : person.group === 'leadership' ? 'Басшылық' : 'Қатысушы';
-  }
+  const role = directoryRoleKk(person).replace(/\s+кафедрасының меңгерушісі$/u, '').replace(/\s+факультетінің деканы$/u, ' деканы');
   return `${selected ? '✅ ' : ''}${compactRole(role)} · ${trim(shortName, 29)}`;
 }
 function label(button, session, store) {
