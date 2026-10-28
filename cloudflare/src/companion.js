@@ -3,7 +3,7 @@ import { clockLabel, stageDescription, timelineText } from './scenario.js';
 
 const button = (text, callback_data) => ({ text, callback_data });
 const uiChoose = (_session, _ru, kk) => kk;
-const RESULT_FIELDS = ['format', 'language', 'brief', 'tone', 'length', 'event_preset', 'event_minutes', 'event_start', 'host_count', 'host_names', 'stage_key', 'stage_note', 'program_blocks', 'script_data', 'people', 'custom_people', 'directory_people', 'reference_date', 'reference_sample', 'event_fact_evidence', 'confirmed_prizes'];
+const RESULT_FIELDS = ['format', 'language', 'brief', 'tone', 'length', 'event_preset', 'event_minutes', 'event_start', 'host_count', 'host_names', 'stage_key', 'stage_note', 'program_blocks', 'script_data', 'people', 'custom_people', 'directory_people', 'reference_date', 'reference_sample', 'event_fact_evidence', 'confirmed_prizes', 'locked_fragments', 'guest_records', 'guest_statuses', 'emergency_state', 'tournament', 'awards_data'];
 
 // A saved text and its attachments always use the settings it was generated with.
 export function captureResultContext(session) {

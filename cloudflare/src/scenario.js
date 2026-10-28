@@ -200,7 +200,7 @@ export function updateConfirmedPrizes(session, instruction = null) {
   return { ...session, confirmed_prizes: state };
 }
 
-export function renderStructuredScenario(session, data) {
+export function renderStructuredScenario(session, data, options = {}) {
   const plan = timeline(session), count = session.host_count || 2;
   if (!data || !Array.isArray(data.blocks) || data.blocks.length !== plan.length) throw new TypeError('Incomplete script');
   const ordered = [...data.blocks].sort((a, b) => a.index - b.index);
@@ -217,7 +217,7 @@ export function renderStructuredScenario(session, data) {
       : gym ? direction : choose(session, `Ремарка: ${direction} Реплики произносятся в согласованной центральной точке; проходы свободны.`, `Ремарка: ${direction} Репликалар келісілген орталық орында айтылады; өту жолы бос қалады.`, `Stage cue: ${direction} Deliver lines at the agreed center position; keep access clear.`);
     const lines = Array.from({ length: count }, (_, n) => `${hostLabel(n + 1)}: ${plain(block.lines[`host_${n + 1}`])}`);
     const facts = factEvidence(session).join('\n');
-    if (/Награжд|Марапат|Awards/iu.test(row.title)) {
+    if (/Награжд|Марапат|Awards/iu.test(row.title) && i !== options.confirmedAwardsIndex) {
       const confirmed = updateConfirmedPrizes(session).confirmed_prizes;
       lines.forEach((line, n) => { if (Object.entries(PRIZE_TYPES).some(([key, type]) => type.test(line) && !confirmed[key])) lines[n] = `${hostLabel(n + 1)}: ` + choose(session, '[Награждающий] вручает [согласованные награды]. Поздравляем участников!', '[Марапаттаушы] [келісілген марапаттарды] табыстайды. Қатысушыларды құттықтаймыз!', '[Presenter] presents [confirmed awards]. Congratulations to the participants!'); });
     }

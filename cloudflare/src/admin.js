@@ -2,6 +2,7 @@ import { catalog, directoryRoleKk, importedRoleKk } from './directory.js';
 import { handleImport, clearImport } from './imports.js';
 
 export const PUBLIC_COMMANDS = [
+  ['tools', 'Ұйымдастырушы құралдары'], ['emergency', 'Жедел өзгеріс'], ['rehearse', 'Репетиция'], ['tournament', 'Турнир кестесі'], ['locks', 'Бекітілген мәтін'], ['awards', 'Марапаттау шебері'], ['guests', 'Қонақтар мәртебесі'], ['voice', 'Дауыспен тапсырма'],
   ['start', 'Жұмысты бастау'], ['new', 'Жаңа мәтін жасау'], ['people', 'Басшылық пен кафедралар'], ['history', 'Соңғы нобайлар'], ['word', 'Word жүктеп алу'], ['pdf', 'PDF жүктеп алу'], ['program', 'Бағдарламаны құрастыру'], ['sheets', 'Ұйымдастырушыларға арналған парақтар'], ['check', 'Іс-шара алдындағы тексеріс'], ['help', 'Қолдану нұсқаулығы'], ['privacy', 'Деректерді өңдеу'], ['delete', 'Мәтіндерімді жою'], ['cancel', 'Ағымдағы тапсырмадан бас тарту'],
 ].map(([command, description]) => ({ command, description }));
 

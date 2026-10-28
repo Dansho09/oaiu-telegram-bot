@@ -11,7 +11,7 @@ const XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const REL = 'http://schemas.openxmlformats.org/package/2006/relationships';
 const DOCREL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
-const ICONS = /[⏱🎬🎤🎭📄📋👥⚙✅☑📌📍📝📚🔊🎵🎶🏆🥇🥈🥉🎓🏛💡💐📣📱📦🔄➕➖⬆⬇⬅➡🧩🔍📥📤🚪⏰🔧📅🕒👤]/gu;
+const ICONS = /[⏱🎬🎤🎭📄📋👥⚙✅☑📌📍📝📚🔊🎵🎶🏆🥇🥈🥉🎓🏛💡💐📣📱📦🔄➕➖⬆⬇⬅➡🧩🔍📥📤🚪⏰🔧📅🕒👤🏐🚨🔒🔓🧰🎙⏸⏹⚠]/gu;
 const escapeXml = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 
 export function cleanExportText(value) {

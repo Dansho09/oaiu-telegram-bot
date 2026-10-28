@@ -6,12 +6,17 @@ import { ownerIdentity, handleAdmin } from './admin.js';
 import { captureResultContext, handleCompanion } from './companion.js';
 import { samplePrompt } from './imports.js';
 import { localizeButtons } from './buttons.js';
+import { handleOperations, operationsPrompt, filterAbsentGuests, finalizeOperationsResult } from './operations.js';
+import { handleRehearsal } from './rehearsal.js';
+import { handleTournament, tournamentPrompt } from './tournament.js';
+import { handleAwards, awardsPrompt } from './awards.js';
+import { handleVoice } from './voice.js';
 
 export { SYSTEM, RESULT_BUTTONS };
 // Interface messages always use Kazakh; generated text has its own language.
 const choose = (_session, _ru, kk) => kk;
 export function resultButtons(session) {
-  return [...RESULT_BUTTONS, [{ text: '✅ Сөз алдындағы тексеру', callback_data: 'check:open' }], [{ text: '👥 Басшылық / қатысушылар', callback_data: 'staff:open' }], ...(isScenario(session) ? [[{ text: '🧩 Бағдарлама құрастыру', callback_data: 'program:open' }, ...(session.format === 'script' ? [{ text: '👥 Командаға жеке парақтар', callback_data: 'sheet:menu' }] : [])], [{ text: '⚙️ Уақыт, жүргізушілер, сахна', callback_data: 'event:config' }]] : [])];
+  return [...RESULT_BUTTONS, [{ text: '✅ Сөз алдындағы тексеру', callback_data: 'check:open' }], [{ text: '👥 Басшылық / қатысушылар', callback_data: 'staff:open' }], ...(isScenario(session) ? [[{ text: '🧩 Бағдарлама құрастыру', callback_data: 'program:open' }, ...(session.format === 'script' ? [{ text: '👥 Командаға жеке парақтар', callback_data: 'sheet:menu' }] : [])], [{ text: '⚙️ Уақыт, жүргізушілер, сахна', callback_data: 'event:config' }]] : []), [{ text: '🧰 Ұйымдастырушы құралдары', callback_data: 'tools:open' }]];
 }
 export const RETRY_BUTTONS = [[{ text: 'Қайталау', callback_data: 'retry:yes' }]];
 export const SCHEMA = [
@@ -63,7 +68,7 @@ export function briefPrompt(s) {
   const size = isScenario(s) ? 'Объём: готовый сценарий с репликами; длительность программы указана в режиссёрских параметрах.' : `Объём: ${s.length || '3'} мин для речи; для других форматов — соразмерно задаче.`;
   const corrections = s.event_fact_evidence?.length ? '\nУточнения организатора в порядке поступления (позднее уточнение заменяет противоречащее раннее; не выполняй стилистическую правку повторно):\n' + s.event_fact_evidence.map((fact, i) => `${i + 1}. ${fact}`).join('\n') : '';
   const prizeFacts = s.confirmed_prizes?.version === 1 ? '\nПодтверждённые виды наград (актуальное состояние, неизвестные виды не добавлять): ' + [['medals', 'медали'], ['cups', 'кубки'], ['trophies', 'трофеи']].filter(([key]) => s.confirmed_prizes[key]).map(([, label]) => label).join(', ') + '. Неподтверждённые награды обозначай плейсхолдером.' : '';
-  return `Формат: ${FORMATS[s.format] || 'Сұраныс бойынша мәтін'}.\nЯзык: ${LANGUAGES[s.language || 'kk'] || 'Қазақша'}.\nТон: ${TONES[s.tone || 'warm'] || 'Жылы'}.\n${size}\nЗадание и подтверждённые сведения:\n${s.brief || ''}${corrections}${prizeFacts}${peopleFacts(s)}${scenarioPrompt(s)}${s.reference_date ? `\nДата исходного задания по Алматы: ${s.reference_date}. В исходном задании «завтра/ертең/tomorrow» относится к этому дню; не сдвигай дату при повторе и не подменяй явно указанную дату.${s.edit_reference_date ? ` Новая правка сделана ${s.edit_reference_date}: относительные даты в самой новой правке считай от этого дня.` : ''}` : ''}`;
+  return `Формат: ${FORMATS[s.format] || 'Сұраныс бойынша мәтін'}.\nЯзык: ${LANGUAGES[s.language || 'kk'] || 'Қазақша'}.\nТон: ${TONES[s.tone || 'warm'] || 'Жылы'}.\n${size}\nЗадание и подтверждённые сведения:\n${s.brief || ''}${corrections}${prizeFacts}${peopleFacts(s)}${scenarioPrompt(s)}${operationsPrompt(s)}${tournamentPrompt(s)}${awardsPrompt(s)}${s.reference_date ? `\nДата исходного задания по Алматы: ${s.reference_date}. В исходном задании «завтра/ертең/tomorrow» относится к этому дню; не сдвигай дату при повторе и не подменяй явно указанную дату.${s.edit_reference_date ? ` Новая правка сделана ${s.edit_reference_date}: относительные даты в самой новой правке считай от этого дня.` : ''}` : ''}`;
 }
 
 export function messagesFor(job) {
@@ -103,6 +108,7 @@ export class Store {
     this.exec('DELETE FROM generation_jobs WHERE chat_id=?', chat);
     this.exec('DELETE FROM outbox WHERE chat_id=? AND job_id IS NOT NULL', chat);
     this.exec("DELETE FROM outbox WHERE chat_id=? AND kind='import_document'", chat);
+    this.exec("DELETE FROM outbox WHERE chat_id=? AND kind='voice_transcribe'", chat);
   }
   effect(chat, kind, payload, jobId = null) {
     this.exec('INSERT INTO outbox(chat_id,kind,payload,job_id) VALUES (?,?,?,?)', chat, kind, JSON.stringify(payload), jobId);
@@ -127,15 +133,17 @@ export class Store {
   finish(chat, id, session, result) {
     return this.transaction(() => {
       const job = this.job(chat); if (!job || job.id !== id || job.result) return false;
+      result = finalizeOperationsResult(session, result);
       const ready = { ...session, step: 'ready', result };
       ready.result_context = captureResultContext(ready);
-      for (const key of ['pending_instruction', 'pending_generation_instruction', 'directory_mode', 'directory_group', 'directory_return_step', 'script_editing', 'brief_prefilled']) delete ready[key];
+      for (const key of ['pending_instruction', 'pending_generation_instruction', 'directory_mode', 'directory_group', 'directory_return_step', 'script_editing', 'brief_prefilled', 'operation_generation', 'operations_notice']) delete ready[key];
       const { result: unused, ...context } = ready;
       this.put(chat, ready);
       this.exec('INSERT INTO drafts(chat_id,title,text,context) VALUES (?,?,?,?)', chat, (ready.brief || 'Текст OAIU').split('\n')[0].slice(0, 100), result, JSON.stringify(context));
       this.exec('DELETE FROM drafts WHERE chat_id=? AND id NOT IN (SELECT id FROM drafts WHERE chat_id=? ORDER BY id DESC LIMIT 10)', chat, chat);
       this.saveJob(chat, { ...job, result });
       this.send(chat, result, resultButtons(ready), id);
+      if (session.operations_notice) this.send(chat, session.operations_notice, null, id);
       return true;
     });
   }
@@ -154,7 +162,7 @@ export class Dialogue {
       const message = callback?.message || update.message || {};
       const chat = message.chat?.id;
       if (callback?.id && Number.isSafeInteger(chat)) this.store.effect(chat, 'callback', { callback_query_id: callback.id });
-      if (Number.isSafeInteger(chat) && message.chat.type === 'private') this.process(chat, String(message.text || '').trim(), String(callback?.data || ''), callback?.from || message.from, callback ? null : message.document);
+      if (Number.isSafeInteger(chat) && message.chat.type === 'private') this.process(chat, String(message.text || '').trim(), String(callback?.data || ''), callback?.from || message.from, callback ? null : message.document, callback ? null : message.voice);
       this.store.exec('INSERT INTO seen_updates VALUES (?,?)', update.update_id, Date.now());
       this.store.exec('DELETE FROM seen_updates WHERE created<?', Date.now() - 7 * 86400000);
       return true;
@@ -162,7 +170,7 @@ export class Dialogue {
   }
   menu(chat, owner = false) {
     this.store.cancel(chat); this.store.put(chat, { step: 'type', language: 'kk' });
-    this.store.send(chat, 'Сәлем! Мен OAIU көмекшісімін. Университет іс-шарасына сөз, уақыт кестесі бар сценарий және басқа мәтіндер дайындаймын.\n\nНе дайындаймыз?', [...keyboard(FORMATS, 'type'), [{ text: '👥 Басшылық / кафедралар', callback_data: 'staff:open' }], ...(owner ? [[{ text: '⚙️ Басқару панелім', callback_data: 'admin:open' }]] : [])]);
+    this.store.send(chat, 'Сәлем! Мен OAIU көмекшісімін. Университет іс-шарасына сөз, уақыт кестесі бар сценарий және басқа мәтіндер дайындаймын.\n\nНе дайындаймыз?', [...keyboard(FORMATS, 'type'), [{ text: '👥 Басшылық / кафедралар', callback_data: 'staff:open' }], [{ text: '🧰 Ұйымдастырушы құралдары', callback_data: 'tools:open' }], ...(owner ? [[{ text: '⚙️ Басқару панелім', callback_data: 'admin:open' }]] : [])]);
   }
   askTone(chat, session) {
     const tones = session.language === 'kk' ? { warm: 'Жылы', formal: 'Салтанатты', inspiring: 'Шабыттандыратын', business: 'Іскерлік' } : TONES;
@@ -229,10 +237,11 @@ export class Dialogue {
     } else if (!session.sample_id) { session = { ...session }; delete session.reference_sample; }
     if (!reviewed) session = enrichPeople(session, instruction || session.brief || '', this.store);
     session = snapshotPeople(session, this.store);
+    session = filterAbsentGuests(session);
     const ambiguous = !reviewed && ambiguousPeople(instruction || session.brief || '', session);
     if (ambiguous) { this.openPeople(chat, { ...session, pending_generation_instruction: instruction }, ambiguous, 'generate'); return; }
     // Apply relative edits only after an optional people-selection round trip.
-    session = scenarioChange(session, instruction);
+    if (!session.operation_generation) session = scenarioChange(session, instruction);
     const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Almaty', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
     const today = ['year', 'month', 'day'].map(key => parts.find(part => part.type === key).value).join('-');
     session.reference_date ||= today;
@@ -240,7 +249,7 @@ export class Dialogue {
     session = { ...session, pending_instruction: instruction }; this.store.put(chat, session);
     if (!this.env.GROQ_API_KEY) { this.store.send(chat, 'Мәтін жасау үшін иесі Groq кілтін қосуы керек. Тапсырма сақталды.', RETRY_BUTTONS); return; }
     const existing = this.store.job(chat);
-    if (existing && existing.instruction === instruction && ['format', 'language', 'tone', 'length', 'brief', 'result', 'people', 'custom_people', 'event_preset', 'event_minutes', 'event_start', 'host_count', 'host_names', 'stage_key', 'stage_note', 'program_blocks', 'reference_sample'].every(key => JSON.stringify(existing.session[key]) === JSON.stringify(session[key]))) return;
+    if (existing && existing.instruction === instruction && ['format', 'language', 'tone', 'length', 'brief', 'result', 'people', 'custom_people', 'event_preset', 'event_minutes', 'event_start', 'host_count', 'host_names', 'stage_key', 'stage_note', 'program_blocks', 'reference_sample', 'locked_fragments', 'guest_statuses', 'guest_records', 'emergency_state', 'tournament', 'awards_data', 'operation_generation'].every(key => JSON.stringify(existing.session[key]) === JSON.stringify(session[key]))) return;
     this.store.cancel(chat);
     const generationSession = { ...session };
     delete generationSession.result_context;
@@ -249,7 +258,7 @@ export class Dialogue {
     this.store.saveJob(chat, job);
     if (!existing?.notice_sent) this.store.send(chat, 'Мәтін дайындап жатырмын…', null, job.id);
   }
-  process(chat, text, callback, sender, document = null) {
+  process(chat, text, callback, sender, document = null, voice = null) {
     const s = this.store;
     let command = text.startsWith('/') ? text.split(/\s/, 1)[0].split('@', 1)[0] : '';
     if (this.env.BOT_ACCESS_CODE && !s.one('SELECT 1 FROM authorized WHERE chat_id=?', chat)) {
@@ -261,8 +270,8 @@ export class Dialogue {
     if (['/start', '/new', '/cancel'].includes(command) || callback === 'new:yes') { this.menu(chat, owner); return; }
     const shortcut = { '/word': 'export:docx', '/pdf': 'export:pdf', '/txt': 'export:txt', '/check': 'check:open', '/sheets': 'sheet:menu', '/program': 'program:open' }[command];
     if (shortcut) { callback = shortcut; command = ''; }
-    if (command === '/help') { s.send(chat, 'Форматты, мәтін тілін, көлемі мен мәнерін таңдап, іс-шараны сипаттаңыз. Әдепкі мәтін тілі — қазақша. Сценарийде ұзақтығын, басталу уақытын, жүргізушілерді және шығу жолдарын баптай аласыз. Басшылықты батырмамен немесе /people арқылы таңдаңыз. Дайын мәтінге түзетуді жай хабарламамен жіберіңіз.\n\n/new — жаңа мәтін\n/people — басшылық пен кафедралар\n/history — соңғы нобайлар\n/word · /pdf · /txt — дайын мәтінді жүктеу\n/program — бағдарламаны құрастыру\n/sheets — сценарий қатысушыларына жеке парақтар\n/check — іс-шара алдындағы тексеру\n/privacy — деректерді өңдеу\n/delete — сақталған мәтіндерді өшіру\n/cancel — ағымдағы тапсырмадан бас тарту'); return; }
-    if (command === '/privacy') { s.send(chat, 'Хабарламалар Telegram арқылы өтеді. Мәтін жасау үшін іс-шара сипаттамасы, нақтылаулар және ағымдағы мәтін Groq қызметіне жіберіледі; Telegram идентификаторы модельге берілмейді. Cloudflare ішінде ағымдағы тапсырма мен мәтіннің соңғы 10 нұсқасына дейін сақталады. Word пен PDF сыртқы түрлендіргішсіз Cloudflare ішінде жасалады. Иесі DOCX жүктей алады: тексеріп, растаған соң ортақ анықтамалыққа аты-жөні мен лауазымдар, ал үлгілерге сценарий бөлімдерінің атаулары сақталады. Файлдың өзі сақталмайды. /delete бот базасындағы өз деректеріңізді өшіреді; Telegram не Groq деректерін өшірмейді.'); return; }
+    if (command === '/help') { s.send(chat, 'Форматты, мәтін тілін, көлемі мен мәнерін таңдап, іс-шараны сипаттаңыз. Әдепкі мәтін тілі — қазақша. Сценарийде ұзақтығын, басталу уақытын, жүргізушілерді және шығу жолдарын баптай аласыз. Басшылықты батырмамен немесе /people арқылы таңдаңыз. Дайын мәтінге түзетуді жай хабарламамен жіберіңіз.\n\n/new — жаңа мәтін\n/people — басшылық пен кафедралар\n/history — соңғы нобайлар\n/word · /pdf · /txt — дайын мәтінді жүктеу\n/program — бағдарламаны құрастыру\n/sheets — сценарий қатысушыларына жеке парақтар\n/tools — ұйымдастырушы құралдары\n/emergency — жедел өзгеріс\n/rehearse — репетиция\n/tournament — турнир кестесі\n/locks — бекітілген мәтін\n/awards — марапаттау шебері\n/guests — қонақтар мәртебесі\n/voice — дауыспен тапсырма\n/check — іс-шара алдындағы тексеру\n/privacy — деректерді өңдеу\n/delete — сақталған мәтіндерді өшіру\n/cancel — ағымдағы тапсырмадан бас тарту'); return; }
+    if (command === '/privacy') { s.send(chat, 'Хабарламалар Telegram арқылы өтеді. Мәтін жасау үшін іс-шара сипаттамасы, нақтылаулар және ағымдағы мәтін Groq қызметіне жіберіледі; Telegram идентификаторы модельге берілмейді. Cloudflare ішінде ағымдағы тапсырма мен мәтіннің соңғы 10 нұсқасына дейін сақталады. Word пен PDF сыртқы түрлендіргішсіз Cloudflare ішінде жасалады. Иесі DOCX жүктей алады: тексеріп, растаған соң ортақ анықтамалыққа аты-жөні мен лауазымдар, ал үлгілерге сценарий бөлімдерінің атаулары сақталады. Файлдың өзі сақталмайды. Дауыстық хабарлама келісіміңізбен Groq қызметіне тануға жіберіледі; дыбыс бот базасында сақталмайды. Танылған мәтін қолданар алдында көрсетіледі. Қонақтар мәртебесін, марапат алушылар тізімін және турнир командаларын тек өз тапсырмаңызда сақтаймын. /delete бот базасындағы өз деректеріңізді өшіреді; Telegram не Groq деректерін өшірмейді.'); return; }
     if (command === '/delete') { s.send(chat, 'Ағымдағы тапсырма мен барлық сақталған нобайларыңызды бот базасынан өшірейін бе?', [[{ text: 'Мәтіндерімді өшіру', callback_data: 'delete:confirm' }, { text: 'Бас тарту', callback_data: 'delete:cancel' }]]); return; }
     if (callback === 'delete:confirm') {
       s.cancel(chat); for (const table of ['sessions', 'drafts', 'quota', 'outbox']) s.exec(`DELETE FROM ${table} WHERE chat_id=?`, chat);
@@ -282,6 +291,20 @@ export class Dialogue {
       const session = { step: 'ready', format: 'speech', language: 'kk', tone: 'warm', length: '3', brief: 'Отредактировать сохранённый текст, сохранив содержащиеся в нём факты.', ...JSON.parse(draft.context || '{}'), result: draft.text };
       s.put(chat, session); s.send(chat, draft.text, resultButtons(session)); return;
     }
+    if (callback === 'tools:open' || command === '/tools') {
+      s.send(chat, 'Ұйымдастырушы құралдары\n\nСценарий дайын болса — жедел өзгеріс, репетиция және бекітілген мәтіндер қолжетімді. Турнир мен марапаттауды бөлек дайындауға да болады.', [
+        [{text:'🚨 Жедел өзгеріс',callback_data:'ops:open'},{text:'🎙 Репетиция',callback_data:'rehearsal:open'}],
+        [{text:'🏐 Турнир кестесі',callback_data:'tournament:open'},{text:'🔒 Бекітілген мәтін',callback_data:'lock:open'}],
+        [{text:'🏆 Марапаттау шебері',callback_data:'awards:open'},{text:'👥 Қонақтар мәртебесі',callback_data:'guest:open'}],
+        [{text:'🎤 Дауыспен тапсырма',callback_data:'voice:help'}],
+      ]); return;
+    }
+    if (callback === 'voice:help') { callback = ''; command = '/voice'; }
+    if (handleVoice(this, chat, text, callback, command, voice)) return;
+    if (handleOperations(this, chat, text, callback, command)) return;
+    if (handleRehearsal(this, chat, text, callback, command)) return;
+    if (handleTournament(this, chat, text, callback, command)) return;
+    if (handleAwards(this, chat, text, callback, command)) return;
     if (!command && !callback) {
       const current = s.get(chat), answer = text.trim().toLocaleLowerCase();
       if (current.step === 'event_settings' && /^(?:жалғастыру|продолжить|continue|дайын|готово|done)$/.test(answer)) callback = 'event:ready';
@@ -296,7 +319,7 @@ export class Dialogue {
     let session = s.get(chat);
     const [kind, value] = callback.split(':', 2);
     if (kind === 'type' && Object.hasOwn(FORMATS, value)) {
-      s.put(chat, { step: 'language', language: 'kk', format: value, people: session.people || [], custom_people: session.custom_people || [], directory_people: session.directory_people || [] }); s.send(chat, 'Мәтінді қай тілде дайындаймыз? Әдепкі тіл — қазақша.', keyboard(LANGUAGES, 'language', 3)); return;
+      s.put(chat, { ...Object.fromEntries(['guest_statuses', 'guest_records', 'tournament', 'awards_data'].filter(key => session[key] !== undefined).map(key => [key, session[key]])), step: 'language', language: 'kk', format: value, people: session.people || [], custom_people: session.custom_people || [], directory_people: session.directory_people || [] }); s.send(chat, 'Мәтінді қай тілде дайындаймыз? Әдепкі тіл — қазақша.', keyboard(LANGUAGES, 'language', 3)); return;
     }
     if (kind === 'language') {
       if (session.step !== 'language' || !Object.hasOwn(LANGUAGES, value)) { s.send(chat, 'Бұл батырма басқа тапсырмаға арналған. Жаңасын бастау: /new'); return; }

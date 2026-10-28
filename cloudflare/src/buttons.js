@@ -59,6 +59,8 @@ function personCaption(id, session, store, selected) {
 }
 function label(button, session, store) {
   const callback = String(button.callback_data || ''), [kind, action, value, item] = callback.split(':');
+  // These modules author Kazakh labels locally, including user-supplied team/name data.
+  if (['tools', 'ops', 'lock', 'guest', 'rehearsal', 'tournament', 'awards', 'voice'].includes(kind)) return button.text || 'Таңдау';
   if (Object.hasOwn(STATIC, callback)) return STATIC[callback];
   if (kind === 'language' || kind === 'translate') return LANGUAGES[action] || 'Тілді таңдау';
   if (kind === 'history') return button.text; // A draft title belongs to the user, not the interface.

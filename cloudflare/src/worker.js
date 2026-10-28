@@ -2,6 +2,9 @@ import { Store, Dialogue, SYSTEM, RETRY_BUTTONS, resultButtons, messagesFor, out
 import { renderScenario, isScenario, timeline, scriptSchema, scriptStructurePrompt, renderStructuredScenario } from './scenario.js';
 import { buildDocument } from './exports.js';
 import { MAX_DOCX_BYTES, ImportError, importIsCurrent, completeDocumentImport, failDocumentImport } from './imports.js';
+import { MAX_VOICE_BYTES, VoiceError, voiceIsCurrent, readVoiceBytes, completeVoice, failVoice } from './voice.js';
+import { OperationsConflict } from './operations.js';
+import { applyAwardsToStructured } from './awards.js';
 
 const json = (data, status = 200) => Response.json(data, { status });
 export function secretEqual(a, b) {
@@ -168,7 +171,11 @@ export class OaiuBot {
     const text = String(choice?.message?.content || '').replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trim();
     if (!text) throw new ServiceError('Groq', 502);
     if (structured) {
-      try { return renderStructuredScenario(job.session, JSON.parse(text)); }
+      try {
+        const data = applyAwardsToStructured(job.session, JSON.parse(text));
+        const confirmedAwardsIndex = job.session.awards_data?.confirmed ? timeline(job.session).findIndex(block => /награж|марапат|awards/iu.test(block.title)) : -1;
+        return renderStructuredScenario(job.session, data, { confirmedAwardsIndex });
+      }
       catch { throw new ServiceError('Groq', 502); }
     }
     return renderScenario(job.session, text + (choice.finish_reason === 'length' ? '\n\n[Жауап көлемінің шегіне жеттік. Жалғастыруды немесе мәтінді қысқартуды сұраңыз.]' : ''));
@@ -193,6 +200,31 @@ export class OaiuBot {
     this.flushing = this.deliver();
     try { await this.flushing; } finally { this.flushing = null; }
   }
+  async transcribeVoice(chat, payload) {
+    if (!voiceIsCurrent(this.store, chat, payload)) { failVoice(this.store, chat, payload); return; }
+    const until = this.store.reserve(chat, Date.now());
+    if (until) throw new ServiceError('GroqASR', 429, Math.ceil((until - Date.now()) / 1000));
+    const file = await this.telegram('getFile', { file_id: payload.file_id });
+    if (file.file_size > MAX_VOICE_BYTES) throw new VoiceError('Дауыстық хабарлама 5 МБ-тан аспауы керек.');
+    const path = String(file.file_path || '');
+    if (!/^[a-zA-Z0-9_/-]+\.[a-zA-Z0-9]+$/.test(path) || path.includes('..') || path.startsWith('/')) throw new VoiceError('Telegram дауыстық файлды қайтармады. Хабарламаны қайта жіберіңіз.');
+    let response;
+    try { response = await fetch(`https://api.telegram.org/file/bot${this.env.TELEGRAM_BOT_TOKEN}/${path}`, { redirect: 'error', signal: AbortSignal.timeout(15000) }); }
+    catch { throw new ServiceError('Telegram'); }
+    if (!response.ok) throw new ServiceError('Telegram', response.status);
+    const bytes = await readVoiceBytes(response);
+    if (!voiceIsCurrent(this.store, chat, payload)) return;
+    const form = new FormData();
+    form.set('file', new Blob([bytes], { type: payload.mime_type || 'audio/ogg' }), 'voice.ogg');
+    form.set('model', this.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3');
+    form.set('response_format', 'verbose_json'); form.set('temperature', '0');
+    form.set('prompt', 'OAIU университеті. Іс-шара, сценарий, жүргізуші, басталу уақыты, акт залы, волейбол, марапаттау.');
+    let data;
+    try { response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${this.env.GROQ_API_KEY}` }, body: form, signal: AbortSignal.timeout(60000) }); data = await response.json(); }
+    catch { throw new ServiceError('GroqASR'); }
+    if (!response.ok) throw new ServiceError('GroqASR', response.status, parseDelay(response.headers.get('Retry-After')) || 60);
+    completeVoice(this.store, chat, payload, data);
+  }
   async deliver() {
     for (let i = 0; i < 6; i++) {
       const row = this.store.one('SELECT * FROM outbox AS o WHERE due<=? AND NOT EXISTS (SELECT 1 FROM outbox AS p WHERE p.chat_id=o.chat_id AND p.id<o.id) ORDER BY id LIMIT 1', Date.now());
@@ -200,7 +232,9 @@ export class OaiuBot {
       if (row.job_id && this.store.job(row.chat_id)?.id !== row.job_id) { this.store.exec('DELETE FROM outbox WHERE id=?', row.id); continue; }
       const payload = JSON.parse(row.payload);
       try {
-        if (row.kind === 'import_document') {
+        if (row.kind === 'voice_transcribe') {
+          await this.transcribeVoice(row.chat_id, payload);
+        } else if (row.kind === 'import_document') {
           await this.importDocument(row.chat_id, payload);
         } else if (row.kind === 'document') {
           const form = new FormData(); form.set('chat_id', String(row.chat_id));
@@ -220,6 +254,11 @@ export class OaiuBot {
         const job = this.store.job(row.chat_id);
         if (row.job_id && job?.id === row.job_id && job.result && !this.store.one('SELECT 1 FROM outbox WHERE job_id=?', row.job_id)) this.store.exec('DELETE FROM generation_jobs WHERE chat_id=?', row.chat_id);
       } catch (error) {
+        if (row.kind === 'voice_transcribe' && (error instanceof VoiceError || error instanceof ServiceError && ([400, 401, 403, 404, 413, 422].includes(error.status) || row.attempts >= 4))) {
+          this.store.exec('DELETE FROM outbox WHERE id=?', row.id);
+          failVoice(this.store, row.chat_id, payload, error instanceof VoiceError ? error.message : undefined);
+          continue;
+        }
         if (row.kind === 'import_document' && (error instanceof ImportError || error instanceof ServiceError && ([400, 403, 404].includes(error.status) || row.attempts >= 5))) {
           this.store.exec('DELETE FROM outbox WHERE id=?', row.id);
           failDocumentImport(this.store, row.chat_id, payload.nonce, error instanceof ImportError ? error.message : undefined);
@@ -267,6 +306,14 @@ export class OaiuBot {
         const result = await this.generate(job);
         this.store.finish(chat, job.id, job.session, result);
       } catch (error) {
+        if (error instanceof OperationsConflict) {
+          if (this.store.job(chat)?.id !== job.id) return;
+          this.store.cancel(chat);
+          const current = this.store.get(chat); delete current.operation_generation;
+          this.store.put(chat, { ...current, step: current.result ? 'ready' : 'brief' });
+          this.store.send(chat, error.message || 'Бекітілген мәтін мен жаңа бағдарлама сәйкес келмейді. Алдымен бекітілген бөлімдерді тексеріңіз.', [[{text:'🔒 Бекітілген мәтін',callback_data:'lock:open'}]]);
+          return;
+        }
         if (!(error instanceof ServiceError)) throw error;
         if (this.store.job(chat)?.id !== job.id) return;
         console.warn('Generation delayed', error.status);
