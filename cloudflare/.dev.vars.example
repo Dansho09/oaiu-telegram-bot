@@ -1,5 +1,7 @@
 TELEGRAM_BOT_TOKEN=
 GROQ_API_KEY=
 TELEGRAM_WEBHOOK_SECRET=
+# Optional owner username, without @. First /admin pins the verified Telegram ID.
+BOT_OWNER_USERNAME=
 # Temporary secret for the one-time, private migration. Remove after import.
 MIGRATION_TOKEN=

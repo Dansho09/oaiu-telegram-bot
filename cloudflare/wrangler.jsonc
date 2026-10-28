@@ -5,7 +5,7 @@
   "compatibility_date": "2026-10-28",
   "workers_dev": true,
   "vars": {
-    "GROQ_MODEL": "qwen/qwen3.8-27b",
+    "GROQ_MODEL": "openai/gpt-oss-120b",
     "BOT_ACCESS_CODE": ""
   },
   "durable_objects": {
