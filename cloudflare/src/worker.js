@@ -1,4 +1,5 @@
-import { Store, Dialogue, SYSTEM, RETRY_BUTTONS, RESULT_BUTTONS, messagesFor, outputBudget, parseDelay } from './core.js';
+import { Store, Dialogue, SYSTEM, RETRY_BUTTONS, resultButtons, messagesFor, outputBudget, parseDelay } from './core.js';
+import { renderScenario, isScenario, timeline, scriptSchema, scriptStructurePrompt, renderStructuredScenario } from './scenario.js';
 
 const json = (data, status = 200) => Response.json(data, { status });
 export function secretEqual(a, b) {
@@ -106,7 +107,7 @@ export class OaiuBot {
       for (const row of this.store.rows('SELECT chat_id,value FROM generation_jobs')) {
         const job = JSON.parse(row.value);
         if (!job?.id || !job.session?.brief) throw new TypeError('Invalid job');
-        if (job.result) this.store.send(row.chat_id, job.result, RESULT_BUTTONS, job.id);
+        if (job.result) this.store.send(row.chat_id, job.result, resultButtons(job.session), job.id);
         else if (!job.notice_sent) this.store.send(row.chat_id, 'Готовлю текст…', null, job.id);
         this.store.saveJob(row.chat_id, { ...job, notice_sent: true, next_at: 0, failures: 0 });
       }
@@ -127,9 +128,12 @@ export class OaiuBot {
     return data.result;
   }
   async generate(job) {
-    const messages = messagesFor(job), model = this.env.GROQ_MODEL || 'qwen/qwen3.8-27b';
+    const messages = messagesFor(job), model = this.env.GROQ_MODEL || 'openai/gpt-oss-120b';
     const payload = { model, messages: [{ role: 'system', content: SYSTEM }, ...messages], temperature: .75, max_completion_tokens: outputBudget(messages) };
     if (model === 'qwen/qwen3.8-27b') Object.assign(payload, { reasoning_effort: 'none', reasoning_format: 'hidden' });
+    if (model.startsWith('openai/gpt-oss-')) Object.assign(payload, { reasoning_effort: 'low', include_reasoning: false });
+    const structured = job.session.format === 'script' && timeline(job.session).length && model.startsWith('openai/gpt-oss-');
+    if (structured) { payload.response_format = scriptSchema(job.session); payload.messages.push({ role: 'user', content: scriptStructurePrompt(job.session) }); }
     let response, data;
     try {
       response = await fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.env.GROQ_API_KEY}` }, body: JSON.stringify(payload), signal: AbortSignal.timeout(75000) });
@@ -139,12 +143,16 @@ export class OaiuBot {
       const description = String(data.error?.message || '').toLowerCase();
       const kind = /per day|per_day/.test(description) ? 'day' : /per minute|per_minute/.test(description) ? 'minute' : '';
       const delay = Math.max(parseDelay(response.headers.get('Retry-After')), parseDelay(description.match(/try again in\s+([\d.hms ]+)/)?.[1]?.replace(/[. ]+$/, '')));
-      throw new ServiceError('Groq', response.status, delay, kind);
+      throw new ServiceError('Groq', /request too large/.test(description) ? 413 : response.status, delay, kind);
     }
     const choice = data.choices?.[0];
     const text = String(choice?.message?.content || '').replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trim();
     if (!text) throw new ServiceError('Groq', 502);
-    return text + (choice.finish_reason === 'length' ? '\n\n[Достигнут предел ответа. Попросите продолжить или сократить текст.]' : '');
+    if (structured) {
+      try { return renderStructuredScenario(job.session, JSON.parse(text)); }
+      catch { throw new ServiceError('Groq', 502); }
+    }
+    return renderScenario(job.session, text + (choice.finish_reason === 'length' ? '\n\n[Достигнут предел ответа. Попросите продолжить или сократить текст.]' : ''));
   }
   async flushOutbox() {
     if (this.flushing) return this.flushing;
@@ -162,7 +170,7 @@ export class OaiuBot {
           const form = new FormData(); form.set('chat_id', String(row.chat_id));
           form.set('document', new Blob(['\uFEFF', payload.text], { type: 'text/plain;charset=utf-8' }), 'OAIU-text.txt');
           await this.telegram('sendDocument', form, true);
-        } else await this.telegram(row.kind === 'callback' ? 'answerCallbackQuery' : 'sendMessage', payload);
+        } else await this.telegram(row.kind === 'callback' ? 'answerCallbackQuery' : row.kind === 'commands' ? 'setMyCommands' : 'sendMessage', payload);
         this.store.exec('DELETE FROM outbox WHERE id=?', row.id);
         const job = this.store.job(row.chat_id);
         if (row.job_id && job?.id === row.job_id && job.result && !this.store.one('SELECT 1 FROM outbox WHERE job_id=?', row.job_id)) this.store.exec('DELETE FROM generation_jobs WHERE chat_id=?', row.chat_id);
@@ -213,10 +221,10 @@ export class OaiuBot {
         if (this.store.job(chat)?.id !== job.id) return;
         console.warn('Generation delayed', error.status);
         if (error.status === 429) this.store.setMeta('groq_pause', { until: Date.now() / 1000 + (error.retryAfter || (error.kind === 'day' ? 86400 : 60)), kind: error.kind });
-        else if (![400, 401, 403, 404].includes(error.status) && (job.failures || 0) < 7) this.store.updateJob(chat, job.id, { failures: (job.failures || 0) + 1, next_at: Date.now() + Math.min(300000, 5000 * 2 ** (job.failures || 0)) });
+        else if (![400, 401, 403, 404, 413].includes(error.status) && (job.failures || 0) < 7) this.store.updateJob(chat, job.id, { failures: (job.failures || 0) + 1, next_at: Date.now() + Math.min(300000, 5000 * 2 ** (job.failures || 0)) });
         else {
           this.store.cancel(chat);
-          this.store.send(chat, [401, 403].includes(error.status) ? 'Не удалось получить текст: владельцу нужно проверить API-ключ и доступ к модели.' : [400, 404].includes(error.status) ? 'Не удалось получить текст: владельцу нужно проверить настройки модели.' : 'Не удалось получить текст. Задание и последний черновик сохранены.', RETRY_BUTTONS);
+          this.store.send(chat, [401, 403].includes(error.status) ? 'Не удалось получить текст: владельцу нужно проверить API-ключ и доступ к модели.' : [400, 404, 413].includes(error.status) ? 'Не удалось получить текст: владельцу нужно проверить настройки модели.' : 'Не удалось получить текст. Задание и последний черновик сохранены.', RETRY_BUTTONS);
         }
       }
       await this.flushOutbox();
