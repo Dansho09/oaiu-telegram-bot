@@ -22,10 +22,10 @@ test('Telegram document update downloads only the official path and publishes on
     assert.equal(url, 'https://api.telegram.org/file/bottest-token/documents/file_1.docx'); assert.equal(options.redirect, 'error'); assert.ok(options.signal instanceof AbortSignal);
     return new Response(document());
   }, () => f.bot.flushOutbox());
-  assert.equal(f.sent[0].method, 'sendMessage'); assert.equal(f.sent[0].payload.text, 'Читаю документ…');
+  assert.equal(f.sent[0].method, 'sendMessage'); assert.equal(f.sent[0].payload.text, 'Құжатты оқып жатырмын…');
   assert.deepEqual(f.sent.find(call => call.method === 'getFile').payload, { file_id: metadata.file_id });
   assert.equal(f.store.get(70).step, 'admin_import_review'); assert.deepEqual(catalog(f.store), before); assert.equal(f.store.one("SELECT * FROM outbox WHERE kind='import_document'"), undefined);
-  const preview = f.sent.filter(c => c.method === 'sendMessage').at(-1).payload; assert.match(preview.text, /Проверьте ФИО/); assert.ok(JSON.stringify(preview.reply_markup).includes(payload.nonce));
+  const preview = f.sent.filter(c => c.method === 'sendMessage').at(-1).payload; assert.match(preview.text, /аты-жөні мен лауазымын тексеріңіз/); assert.ok(JSON.stringify(preview.reply_markup).includes(payload.nonce));
   f.dialogue.accept(tap('admin:import_confirm:' + payload.nonce)); assert.equal(catalog(f.store)[0].name, 'Новый Имя Отчество');
 });
 
@@ -33,7 +33,7 @@ test('untrusted attachments never queue downloads or expose the admin interface'
   const f = configured(); f.dialogue.accept(update('', metadata, 71, 'owner_test'));
   assert.equal(f.store.one("SELECT * FROM outbox WHERE kind='import_document'"), undefined); assert.equal(f.store.get(71).step, 'type');
   await mockFetch(() => { throw new Error('No external request allowed'); }, () => f.bot.flushOutbox());
-  const denied = f.sent.find(c => c.payload?.chat_id === 71); assert.match(denied.payload.text, /недоступна/); assert.equal(denied.payload.reply_markup, undefined);
+  const denied = f.sent.find(c => c.payload?.chat_id === 71); assert.match(denied.payload.text, /қолжетімсіз/); assert.equal(denied.payload.reply_markup, undefined);
 });
 
 test('download rejects traversal, foreign URLs and oversized getFile metadata before fetching', async () => {
@@ -69,7 +69,7 @@ test('permanent upload failure returns to upload mode with no stale outbox downl
   const f = configured(); queued(f); fileStub(f);
   await mockFetch(async () => new Response('', { status: 404 }), () => f.bot.flushOutbox());
   assert.equal(f.store.get(70).step, 'admin_import_upload'); assert.equal(f.store.one("SELECT * FROM outbox WHERE kind='import_document'"), undefined);
-  assert.ok(f.sent.some(c => c.method === 'sendMessage' && /Не удалось загрузить/.test(c.payload.text)));
+  assert.ok(f.sent.some(c => c.method === 'sendMessage' && /Құжатты жүктеу мүмкін болмады/.test(c.payload.text)));
 });
 
 test('transient upload failure retries but cancellation immediately removes the blocking retry', async () => {
@@ -78,7 +78,7 @@ test('transient upload failure retries but cancellation immediately removes the 
   const pending = f.store.one("SELECT * FROM outbox WHERE kind='import_document'"); assert.equal(pending.attempts, 1); assert.ok(pending.due > Date.now());
   f.dialogue.accept(update('/cancel'));
   assert.equal(f.store.one("SELECT * FROM outbox WHERE kind='import_document'"), undefined, 'A canceled retry must not block the new menu until its due time');
-  await f.bot.flushOutbox(); assert.ok(f.sent.some(c => c.method === 'sendMessage' && /Что создадим/.test(c.payload.text)));
+  await f.bot.flushOutbox(); assert.ok(f.sent.some(c => c.method === 'sendMessage' && /Не дайындаймыз/.test(c.payload.text)));
 });
 
 test('failed getFile requests never copy secrets or network diagnostics to the user', async () => {

@@ -33,22 +33,22 @@ test('answer budgets account for format and long translations', () => {
 test('wizard retains choices through a complete Kazakh brief', () => {
   const f = fixture(); for (const data of ['type:speech', 'language:kk', 'length:1', 'tone:formal']) f.dialogue.accept(button(data));
   f.dialogue.accept(message('OAIU студенттеріне құттықтау'));
-  assert.equal(f.store.job(10).session.language, 'kk'); assert.equal(f.store.job(10).session.length, '1'); assert.equal(f.store.job(10).session.tone, 'formal'); assert.equal(texts(f).filter(t => t === 'Готовлю текст…').length, 1);
+  assert.equal(f.store.job(10).session.language, 'kk'); assert.equal(f.store.job(10).session.length, '1'); assert.equal(f.store.job(10).session.tone, 'formal'); assert.equal(texts(f).filter(t => t === 'Мәтін дайындап жатырмын…').length, 1);
 });
 test('duplicate Telegram delivery changes nothing twice', () => {
   const f = fixture(), u = message('/start'); f.dialogue.accept(u); const count = f.store.counts().outbox;
   assert.equal(f.dialogue.accept(u), false); assert.equal(f.store.counts().outbox, count);
 });
 test('public bot accepts a new visitor without an invitation', () => {
-  const f = fixture(); f.dialogue.accept(message('/start', 999)); assert.equal(f.store.get(999).step, 'type'); assert.ok(texts(f).some(t => t.includes('Что создадим')));
+  const f = fixture(); f.dialogue.accept(message('/start', 999)); assert.equal(f.store.get(999).step, 'type'); assert.ok(texts(f).some(t => t.includes('Не дайындаймыз')));
 });
 test('optional invitation mode remains available', () => {
-  const f = fixture({ BOT_ACCESS_CODE: 'invite' }); f.dialogue.accept(message('/start')); assert.match(texts(f)[0], /приглашению/);
+  const f = fixture({ BOT_ACCESS_CODE: 'invite' }); f.dialogue.accept(message('/start')); assert.match(texts(f)[0], /шақыру арқылы/);
   f.dialogue.accept(message('/start invite')); assert.ok(f.store.one('SELECT 1 FROM authorized WHERE chat_id=10'));
 });
 test('draft lookup and history are isolated by owner', () => {
   const f = fixture(); f.store.exec('INSERT INTO drafts(id,chat_id,title,text,context) VALUES (1,20,?,?,?)', 'Чужой', 'Private', '{}');
-  f.dialogue.accept(button('history:1')); assert.ok(!texts(f).includes('Private')); f.dialogue.accept(message('/history')); assert.match(texts(f).at(-1), /Черновиков пока нет/);
+  f.dialogue.accept(button('history:1')); assert.ok(!texts(f).includes('Private')); f.dialogue.accept(message('/history')); assert.match(texts(f).at(-1), /Әзірге нобай жоқ/);
 });
 test('finished drafts keep ten versions per user and preserve other users', () => {
   const f = fixture();
@@ -61,9 +61,9 @@ test('restored draft uses its original event context', () => {
   f.store.put(10, { ...ready, brief: 'Unrelated event' }); f.dialogue.accept(button('history:1'));
   assert.equal(f.store.get(10).brief, 'First event'); assert.equal(f.store.get(10).language, 'en');
 });
-test('direct text starts a default speech', () => {
+test('a direct Russian brief starts a Kazakh speech by default', () => {
   const f = fixture(); f.dialogue.accept(message('Текст для открытия конференции'));
-  assert.equal(f.store.job(10).session.format, 'speech'); assert.equal(texts(f).at(-1), 'Готовлю текст…');
+  assert.equal(f.store.job(10).session.format, 'speech'); assert.equal(f.store.job(10).session.language, 'kk'); assert.match(messagesFor(f.store.job(10))[0].content, /Язык: Қазақша/); assert.equal(texts(f).at(-1), 'Мәтін дайындап жатырмын…');
 });
 test('editing buttons and translations preserve the original text', () => {
   for (const data of ['edit:short', 'edit:formal', 'edit:thanks', 'edit:simple', 'translate:kk', 'translate:ru', 'translate:en']) {
@@ -96,7 +96,7 @@ test('a completed job creates its draft exactly once', () => {
 test('Groq rate limit waits silently and retains the task', async () => {
   const f = fixture(); f.dialogue.accept(message('Текст')); f.bot.generate = async () => { throw new ServiceError('Groq', 429, 60); };
   await f.bot.alarm(); assert.ok(f.store.job(10)); assert.ok(f.alarm() >= Date.now() + 59000);
-  assert.equal(f.sent.filter(s => s.payload?.text).length, 1); assert.equal(f.sent[0].payload.text, 'Готовлю текст…');
+  assert.equal(f.sent.filter(s => s.payload?.text).length, 1); assert.equal(f.sent[0].payload.text, 'Мәтін дайындап жатырмын…');
 });
 test('quotas enforce personal and shared request budgets', () => {
   const f = fixture(), now = Date.now(); for (let i = 0; i < 4; i++) assert.equal(f.store.reserve(10, now), 0);
@@ -165,7 +165,7 @@ test('transient Groq errors retry in the background', async () => {
 });
 test('bad provider credentials preserve the brief for manual retry', async () => {
   const f = fixture(); f.dialogue.accept(message('Описание')); f.bot.generate = async () => { throw new ServiceError('Groq', 401); }; await f.bot.alarm();
-  assert.equal(f.store.job(10), null); assert.equal(f.store.get(10).brief, 'Описание'); assert.ok(f.sent.some(s => /API-ключ/.test(s.payload.text)));
+  assert.equal(f.store.job(10), null); assert.equal(f.store.get(10).brief, 'Описание'); assert.ok(f.sent.some(s => /API кілтін/.test(s.payload.text)));
 });
 test('webhook acknowledges durable acceptance before slow delivery finishes', async () => {
   const f = fixture(); let release; f.bot.telegram = () => new Promise(resolve => { release = resolve; });

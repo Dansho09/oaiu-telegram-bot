@@ -41,7 +41,7 @@ test('stale callback cannot mutate after a different edit or program exit', () =
   f.dialogue.accept(tap(stale)); assert.deepEqual(f.store.get(80).program_blocks, after);
   const staleDone = `program:done:${f.store.get(80).program_revision}`;
   click(f, 'done'); f.dialogue.accept(tap(staleDone)); assert.equal(f.store.get(80).step, 'event_settings');
-  assert.match(texts(f).at(-1).text, /устарела/);
+  assert.match(texts(f).at(-1).text, /ескірді/);
 });
 test('constructor bounds reject empty, undersized, oversized and too many blocks without data loss', () => {
   const one = init({ ...base, event_minutes: 15, program_blocks: blocks(1, 15) });

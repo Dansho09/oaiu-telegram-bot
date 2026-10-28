@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture } from './fixture.js';
 import { captureResultContext, roleSheet, preflight } from '../src/companion.js';
+import { resultButtons } from '../src/core.js';
 let seq = 710000;
 const tap = (data, chat=29) => ({update_id:seq++, callback_query:{id:String(seq),data,from:{id:chat},message:{chat:{id:chat,type:'private'}}}});
 const messages = f => f.store.rows("SELECT payload FROM outbox WHERE kind='message'").map(r=>JSON.parse(r.payload));
@@ -27,7 +28,15 @@ test('separate sheet export queues only selected participant and other users can
  f.dialogue.accept(tap('sheetdoc:docx:host_2',30));assert.equal(f.store.one("SELECT COUNT(*) AS n FROM outbox WHERE kind='document'").n,1);
 });
 test('old and non-script drafts do not fabricate role sheets',()=>{
- const f=fixture();f.store.put(29,{step:'ready',result:'Старая речь',format:'speech'});f.dialogue.accept(tap('sheet:host_1'));assert.match(messages(f).at(-1).text,/новый сценарий/);assert.equal(roleSheet({result:'Старая речь'},'host_1'),null);
+ const f=fixture();f.store.put(29,{step:'ready',result:'Старая речь',format:'speech'});f.dialogue.accept(tap('sheet:host_1'));assert.match(messages(f).at(-1).text,/Жеке парақтар «Сценарий» форматына арналған/);assert.equal(roleSheet({result:'Старая речь'},'host_1'),null);
+});
+test('a kit never advertises or exports role sheets even with leftover structured data',()=>{
+ const f=fixture(), kit={...state(),format:'kit'};f.store.put(29,kit);
+ assert.ok(!resultButtons(kit).flat().some(button=>button.callback_data==='sheet:menu'));
+ assert.equal(roleSheet(kit,'host_1'),null);
+ f.dialogue.accept(tap('sheet:menu'));assert.match(messages(f).at(-1).text,/Жеке парақтар «Сценарий» форматына арналған/);
+ f.dialogue.accept(tap('sheetdoc:docx:host_1'));assert.equal(f.store.one("SELECT COUNT(*) AS n FROM outbox WHERE kind='document'").n,0);
+ f.dialogue.accept(tap('export:docx'));const payload=JSON.parse(f.store.one("SELECT payload FROM outbox WHERE kind='document'").payload);assert.equal(payload.text,kit.result);assert.equal(payload.format,'docx');
 });
 test('export does not alter draft, cancel jobs or use model generation',()=>{
  const f=fixture();const s=state();f.store.put(29,s);f.dialogue.accept(tap('export:docx'));f.dialogue.accept(tap('check:open'));assert.deepEqual(f.store.get(29),s);assert.equal(f.store.job(29),null);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { zipSync, strToU8 } from 'fflate';
 import { fixture } from './fixture.js';
 import { handleAdmin } from '../src/admin.js';
-import { catalog } from '../src/directory.js';
+import { catalog, detectPeople, snapshotPeople, selectedPeople, isRectorRole, importedRoleKk } from '../src/directory.js';
 import { MAX_DOCX_BYTES, ImportError, validateDocument, extractDocx, directoryProposal, sampleProposal, completeDocumentImport, importIsCurrent, samplePrompt } from '../src/imports.js';
 
 const xmlEscape = value => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
@@ -31,7 +31,7 @@ test('parser rejects corrupt files, macros, path traversal, missing Word XML and
 test('inflation checks actual size even when the archive lies about uncompressed size', () => {
   const data = docx(['a'.repeat(2 * MAX_DOCX_BYTES)]), view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   for (let at = 0; at < data.length - 46; at++) if (view.getUint32(at, true) === 0x02014b50 && new TextDecoder().decode(data.subarray(at + 46, at + 46 + view.getUint16(at + 28, true))) === 'word/document.xml') view.setUint32(at + 24, 200, true);
-  assert.throws(() => extractDocx(data), /слишком большой/);
+  assert.throws(() => extractDocx(data), /тым үлкен/);
 });
 test('directory import extracts professional names only and ignores contacts and student performers', () => {
   const d = extractDocx(docx(['Студент Тестовый; участник концерта', 'Тест Телефон; Декан +77771234567'], [['ФИО', 'Должность'], ['Ажидинов Акмалдин Сапардинович', 'Ректор OAIU'], ['Тест Аты Жөні', 'Тест кафедрасының меңгерушісі']]));
@@ -50,7 +50,7 @@ test('directory import makes no global changes before owner confirmation and sup
 });
 test('non-owner and stale confirmation cannot publish proposals or see their content', () => {
   const fixture = f(), payload = upload(fixture, 'directory', docx(['Новый Имя Отчество; Ректор OAIU']));
-  fixture.dialogue.accept(tap('admin:import_confirm:' + payload.nonce, 71)); assert.match(messages(fixture).at(-1), /недоступна/); assert.ok(!messages(fixture).at(-1).includes('Новый'));
+  fixture.dialogue.accept(tap('admin:import_confirm:' + payload.nonce, 71)); assert.match(messages(fixture).at(-1), /қолжетімсіз/); assert.ok(!messages(fixture).at(-1).includes('Новый'));
   fixture.dialogue.accept(tap('admin:import_confirm:wrong')); assert.equal(catalog(fixture.store)[0].name, 'Ажидинов Акмалдин Сапардинович');
   fixture.dialogue.accept(tap('admin:import_cancel:' + payload.nonce)); fixture.dialogue.accept(tap('admin:import_confirm:' + payload.nonce)); assert.equal(catalog(fixture.store)[0].name, 'Ажидинов Акмалдин Сапардинович');
 });
@@ -61,8 +61,8 @@ test('leaving import ignores a late download and replayed import effects', () =>
 });
 test('expired proposals and changed shared-directory revisions must be reviewed again', () => {
   const fixture = f(), payload = upload(fixture, 'directory', docx(['Новый Имя Отчество; Ректор OAIU']));
-  fixture.store.setMeta('directory_revision', 100); fixture.dialogue.accept(tap('admin:import_confirm:' + payload.nonce)); assert.match(messages(fixture).at(-1), /изменились/);
-  fixture.store.put(70, { ...fixture.store.get(70), import_started: Date.now() - 16 * 60000 }); fixture.dialogue.accept(tap('admin:import_confirm:' + payload.nonce)); assert.match(messages(fixture).at(-1), /устарела/);
+  fixture.store.setMeta('directory_revision', 100); fixture.dialogue.accept(tap('admin:import_confirm:' + payload.nonce)); assert.match(messages(fixture).at(-1), /деректер өзгерді/);
+  fixture.store.put(70, { ...fixture.store.get(70), import_started: Date.now() - 16 * 60000 }); fixture.dialogue.accept(tap('admin:import_confirm:' + payload.nonce)); assert.match(messages(fixture).at(-1), /ескірген/);
 });
 test('samples are owner-confirmed, bounded to five, and can be selected as prompt-only structure', () => {
   const fixture = f(); fixture.store.setMeta('approved_samples', Array.from({ length: 5 }, (_, i) => ({ id: 'sample_old_' + i, title: 'старый', blocks: [] })));
@@ -74,4 +74,56 @@ test('samples are owner-confirmed, bounded to five, and can be selected as promp
 test('malformed upload returns to upload step without losing previous draft', () => {
   const fixture = f(); fixture.store.put(70, { step: 'ready', result: 'Keep my draft', brief: 'Original event' }); upload(fixture, 'sample', new Uint8Array(10));
   assert.equal(fixture.store.get(70).step, 'admin_import_upload'); assert.equal(fixture.store.get(70).result, 'Keep my draft');
+});
+
+
+test('rector imports reconcile common Russian Kazakh and English office labels to one canonical record', () => {
+  const roles = ['Ректор', 'Ректор ОАИУ', 'Ректор университета OAIU', 'Ректор Центрально-Азиатского инновационного университета', 'ОАИУ ректоры', 'Университет ректоры', 'OAIU ректоры', 'Rector of OAIU', 'University Rector'];
+  for (const role of roles) {
+    const fixture = f(), proposal = directoryProposal({ rows: [], paragraphs: ['Жаңа Басшы Аты; ' + role] }, fixture.store);
+    assert.equal(proposal.length, 1); assert.equal(proposal[0].id, 'rector', role); assert.ok(proposal[0].previous, role);
+    const payload = upload(fixture, 'directory', docx(['Жаңа Басшы Аты; ' + role]));
+    fixture.dialogue.accept(tap('admin:import_confirm:' + payload.nonce));
+    assert.equal(catalog(fixture.store).length, 13, role);
+    const auto = snapshotPeople({ people: detectPeople('Ректор сөз сөйлейді', fixture.store) }, fixture.store);
+    assert.equal(selectedPeople(auto)[0].name, 'Жаңа Басшы Аты', role);
+    assert.equal(catalog(fixture.store)[0].roleKk, 'OAIU ректоры', role);
+  }
+});
+test('rector reconciliation follows the office when an existing vice rector is promoted and rejects two rector candidates', () => {
+  const fixture = f();
+  const proposal = directoryProposal({ rows: [], paragraphs: ['Дуйсенов Нурзак Жезтаевич; Ректор университета OAIU'] }, fixture.store);
+  assert.equal(proposal[0].id, 'rector');
+  assert.throws(() => directoryProposal({ rows: [], paragraphs: ['Бірінші Басшы Аты; Ректор университета OAIU', 'Екінші Басшы Аты; OAIU ректоры'] }, fixture.store), ImportError);
+});
+test('vice rector and deputy labels never overwrite the rector office', () => {
+  for (const role of ['Проректор по науке', 'Vice-rector for research', 'Vice–rector for research', 'Pro Rector for research', 'Deputy Rector', 'Ректордың ғылым жөніндегі орынбасары', 'Вице–ректор']) {
+    assert.equal(isRectorRole(role), false, role);
+    const proposal = directoryProposal({ rows: [], paragraphs: ['Басқа Басшы Аты; ' + role] });
+    assert.notEqual(proposal[0].id, 'rector', role);
+  }
+});
+test('imported roles keep original facts without treating Russian or English text as Kazakh', () => {
+  assert.equal(importedRoleKk('Декан факультета педагогики и языков'), 'Педагогика және тілдер факультетінің деканы');
+  assert.equal(importedRoleKk('Декан нового факультета'), '');
+  assert.equal(importedRoleKk('Проректор учебной работы'), '');
+  assert.equal(importedRoleKk('Vice-rector for new programmes'), '');
+  assert.equal(importedRoleKk('Экономика кафедрасының меңгерушісі'), 'Экономика кафедрасының меңгерушісі');
+  const fixture = f(), payload = upload(fixture, 'directory', docx(['Басқа Басшы Аты; Декан нового факультета']));
+  fixture.dialogue.accept(tap('admin:import_confirm:' + payload.nonce));
+  assert.equal(catalog(fixture.store).at(-1).role, 'Декан нового факультета');
+  assert.equal(catalog(fixture.store).at(-1).roleKk, '');
+});
+test('import instructions errors and template review stay Kazakh for Russian and English output sessions', () => {
+  for (const language of ['ru', 'en']) {
+    const fixture = f(); fixture.store.put(70, { language, step: 'ready', result: 'Existing' });
+    const payload = upload(fixture, 'sample', docx(['Opening', 'Awards', 'Closing']));
+    assert.match(messages(fixture).at(-1), /Үлгі құрылымын тексеріңіз/);
+    assert.match(messages(fixture).at(-1), /Ашылу/); assert.doesNotMatch(messages(fixture).at(-1), /Открытие|Closing|Проверьте/);
+    fixture.dialogue.accept(tap('admin:import_cancel:' + payload.nonce));
+    assert.match(messages(fixture).at(-1), /Жүктеуден бас тартылды/);
+    fixture.dialogue.accept(tap('admin:import:directory'));
+    assert.match(messages(fixture).at(-1), /Аты-жөні/);
+    assert.throws(() => validateDocument({ ...meta, file_name: 'bad.pdf' }), /құжаты керек/);
+  }
 });

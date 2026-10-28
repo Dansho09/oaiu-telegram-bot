@@ -78,3 +78,23 @@ test('localization is immutable and unknown controls fail to a Kazakh action rat
  const rows=[[{text:'Скачать',callback_data:'future:unknown',extra:42},{text:'Открыть',url:'https://example.com'}]],copy=structuredClone(rows),session={language:'en'};
  const output=localizeButtons(rows,session);assert.deepEqual(rows,copy);assert.equal(output[0][0].text,'Таңдау');assert.equal(output[0][1].text,'Ашу');assert.equal(output[0][0].extra,42);assert.equal(session.language,'en');assert.equal(localizeButtons(null),null);
 });
+
+
+test('imported Russian and English roles cannot return foreign language system captions', () => {
+  const f = fixture();
+  const people = [
+    { id: 'new_rector', name: 'Жаңа Басшы Аты', role: 'Ректор университета OAIU', roleKk: 'Ректор университета OAIU', group: 'leadership' },
+    { id: 'new_vice', name: 'Жаңа Басшы Аты', role: 'Vice-rector for new programmes', roleKk: 'Vice-rector for new programmes', group: 'leadership' },
+    { id: 'new_dean', name: 'Жаңа Басшы Аты', role: 'Декан нового факультета', roleKk: '', group: 'deans' },
+    { id: 'new_head', name: 'Жаңа Басшы Аты', role: 'Head of the new department', roleKk: '', group: 'departments' },
+  ];
+  f.store.setMeta('directory_extra', people);
+  for (const language of ['ru', 'kk', 'en']) {
+    for (const person of people) {
+      const caption = textFor('person:' + person.id, { language }, f.store);
+      assert.doesNotMatch(caption, /университета|факультета|Vice|Head|programmes/);
+      assert.match(caption, /ректоры|Басшылық|Декан|Кафедра меңгерушісі/);
+      assert.match(caption, /Жаңа/);
+    }
+  }
+});

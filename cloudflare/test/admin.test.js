@@ -26,13 +26,13 @@ test('ownership fails closed without sender metadata or configured username', ()
 });
 test('pinned owner ID survives username changes and rejects username reuse', () => {
   const f = configured(); f.dialogue.accept(send('/admin')); f.store.exec('DELETE FROM outbox');
-  f.dialogue.accept(send('/admin', 71)); assert.match(messages(f).at(-1).text, /недоступна/);
-  f.dialogue.accept(send('/admin', 70, 'changed')); assert.match(messages(f).at(-1).text, /Админ-панель/);
+  f.dialogue.accept(send('/admin', 71)); assert.match(messages(f).at(-1).text, /қолжетімсіз/);
+  f.dialogue.accept(send('/admin', 70, 'changed')); assert.match(messages(f).at(-1).text, /Басқару панелі/);
 });
 test('callback ownership uses the human sender rather than the bot message author', () => {
-  const f = configured(); f.dialogue.accept(send('/admin')); f.dialogue.accept(tap('admin:stats')); assert.match(messages(f).at(-1).text, /Сессии:/);
-  f.dialogue.accept(tap('admin:stats', 71)); assert.match(messages(f).at(-1).text, /недоступна/);
-  assert.ok(!messages(f).at(-1).text.includes('Сессии:'));
+  const f = configured(); f.dialogue.accept(send('/admin')); f.dialogue.accept(tap('admin:stats')); assert.match(messages(f).at(-1).text, /Сессиялар:/);
+  f.dialogue.accept(tap('admin:stats', 71)); assert.match(messages(f).at(-1).text, /қолжетімсіз/);
+  assert.ok(!messages(f).at(-1).text.includes('Сессиялар:'));
 });
 test('public menu hides admin controls and owner menu shows them after claim', () => {
   const f = configured(); f.dialogue.accept(send('/start', 71, 'visitor'));
@@ -87,4 +87,16 @@ test('oversized provider request is a permanent configuration error without a si
   const f = configured(), original = globalThis.fetch;
   globalThis.fetch = async () => Response.json({ error: { message: 'Request too large for output tokens per minute' } }, { status: 429 });
   try { await assert.rejects(f.bot.generate({ session: { format: 'speech', brief: 'Приветствие' } }), e => e instanceof ServiceError && e.status === 413); } finally { globalThis.fetch = original; }
+});
+
+
+test('admin menus and public directory instructions always use Kazakh independently of output language', () => {
+  for (const language of ['ru', 'en']) {
+    const f = configured(); f.dialogue.accept(send('/admin')); f.store.put(70, { language, step: 'ready' });
+    f.dialogue.accept(send('/admin')); assert.match(messages(f).at(-1).text, /Басқару панелі/);
+    f.dialogue.accept(tap('admin:stats')); assert.match(messages(f).at(-1).text, /Сессиялар:/);
+    assert.doesNotMatch(messages(f).at(-1).text, /Сессии|Черновики|Statistics/);
+    f.store.put(71, { language, step: 'type' }); f.dialogue.accept(send('/people', 71, 'visitor')); assert.match(messages(f).at(-1).text, /Мәтінге кімді қосамыз/);
+    f.dialogue.accept(tap('admin:group:deans')); assert.match(messages(f).at(-1).text, /Жаңа басшының аты-жөні/);
+  }
 });

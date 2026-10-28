@@ -20,6 +20,37 @@ test('DOCX is a real editable package, escapes input, preserves Kazakh and defin
   assert.ok(archive['_rels/.rels']);
 });
 
+test('a sixteen-segment Word plan can paginate independently while real headings stay with their text', async () => {
+  const plan = Array.from({ length: 16 }, (_, index) => `14:${String(index).padStart(2, '0')}–14:${String(index + 1).padStart(2, '0')} · Бөлім ${index + 1} (1 мин)`);
+  const text = ['ІС-ШАРА ЖОСПАРЫ', 'Басталуы: 14:00', ...plan, '', 'СЦЕНАРИЙ', '', '1. Бөлім 1 · 14:00–14:01', 'Жүргізуші 1: Құрметті қонақтар!'].join('\n');
+  const result = await buildDocument({ text, format: 'docx' });
+  const archive = unzipSync(result.bytes), xml = strFromU8(archive['word/document.xml']), styles = strFromU8(archive['word/styles.xml']);
+  const paragraphs = [...xml.matchAll(/<w:p>([\s\S]*?)<\/w:p>/g)].map(match => match[1]);
+  const rows = paragraphs.filter(paragraph => /<w:pStyle w:val="Timeline"\/>/.test(paragraph));
+  assert.equal(rows.length, 16, 'Each timing row must use the independently flowing list style');
+  for (let i = 0; i < plan.length; i++) assert.ok(rows[i].includes(plan[i]));
+  const timelineStyle = styles.match(/<w:style\b[^>]*w:styleId="Timeline"[^>]*>[\s\S]*?<\/w:style>/)?.[0];
+  assert.ok(timelineStyle, 'The list style must exist in the exported package');
+  assert.match(timelineStyle, /<w:keepNext w:val="0"\/>/);
+  assert.doesNotMatch(timelineStyle, /<w:keepNext\/>|<w:pageBreakBefore/);
+  const blockHeading = paragraphs.find(paragraph => paragraph.includes('1. Бөлім 1 · 14:00–14:01'));
+  assert.match(blockHeading, /<w:pStyle w:val="Heading1"\/>/);
+  const headingStyle = styles.match(/<w:style\b[^>]*w:styleId="Heading1"[^>]*>[\s\S]*?<\/w:style>/)?.[0];
+  assert.match(headingStyle, /<w:keepNext\/>/);
+});
+
+test('default export titles and PDF application metadata are Kazakh without changing supplied content', async () => {
+  const text = 'This is the supplied English speech. Ә Ғ Қ Ң Ө Ұ Ү Һ І';
+  const docx = await buildDocument({ text, format: 'docx' });
+  const xml = strFromU8(unzipSync(docx.bytes)['word/document.xml']);
+  assert.match(xml, /OAIU құжаты/);
+  assert.ok(xml.includes(text));
+  const pdf = await PDFDocument.load((await buildDocument({ text, format: 'pdf' })).bytes, { updateMetadata: false });
+  assert.equal(pdf.getTitle(), 'OAIU құжаты');
+  assert.equal(pdf.getCreator(), 'OAIU көмекшісі');
+  assert.equal(pdf.getProducer(), 'OAIU көмекшісі');
+});
+
 test('PDF has embedded Unicode fonts, complete Kazakh character mappings and multiple pages', async () => {
   const text = 'Ә Ғ Қ Ң Ө Ұ Ү Һ І ә ғ қ ң ө ұ ү һ і\n' + Array.from({ length: 110 }, (_, i) => `Жүргізуші ${i + 1}: Құрметті қонақтар! Добро пожаловать на мероприятие OAIU.`).join('\n') + '\nFINAL SENTINEL';
   const result = await buildDocument({ title: 'OAIU сценарий', text, format: 'pdf' });
