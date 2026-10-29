@@ -146,7 +146,7 @@ test('rendered script has one exact timeline and edit context excludes the old h
   const messages = messagesFor({ session: { ...script, result }, instruction: 'Қысқарт' }); assert.equal(messages[1].content, 'Жүргізуші 1: Қош келдіңіздер!');
 });
 test('old drafts retain normal speech controls while scripts get settings', () => {
-  assert.ok(!resultButtons(ready).flat().some(b => b.callback_data === 'event:config')); assert.ok(resultButtons(script).flat().some(b => b.callback_data === 'event:config'));
+  assert.ok(!resultButtons(ready).flat().some(b => b.callback_data === 'nav:event')); assert.ok(resultButtons(script).flat().some(b => b.callback_data === 'nav:event'));
 });
 test('stale scenario buttons cannot turn a speech into a tournament', () => {
   const f = fixture(); f.store.put(50, ready); f.dialogue.accept(click('event:duration:120')); assert.equal(f.store.get(50).format, 'speech'); assert.equal(f.store.get(50).event_minutes, undefined);

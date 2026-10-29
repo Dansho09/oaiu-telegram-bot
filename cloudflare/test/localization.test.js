@@ -19,12 +19,12 @@ test('explicit other output languages keep all wizard and command instructions i
   f.dialogue.accept(tap('tone:warm'));assert.match(latest(f),/Мәтінге кімді қосамыз/);
   f.dialogue.accept(tap('staff:none'));assert.match(latest(f),/Енді іс-шараны/);
   f.dialogue.accept(send('Студенттерге құттықтау.'));assert.equal(f.store.job(87).session.language,language);
-  for(const [command,pattern] of [['/help',/Форматты/],['/privacy',/Хабарламалар/],['/unknown',/Мұндай команда/],['/delete',/нобайларыңызды/]]){f.dialogue.accept(send(command));assert.match(latest(f),pattern);}
+  for(const [command,pattern] of [['/help',/Қалай қолданамын/],['/privacy',/Хабарламалар/],['/unknown',/Мұндай команда/],['/delete',/нобайларыңызды/]]){f.dialogue.accept(send(command));assert.match(latest(f),pattern);}
  }
 });
 test('kit offers only supported outputs while scripts expose team sheets',()=>{
  const callbacks = format => resultButtons({format}).flat().map(b=>b.callback_data);
- assert.ok(!callbacks('kit').includes('sheet:menu'));assert.ok(callbacks('kit').includes('program:open'));assert.ok(callbacks('kit').includes('export:menu'));assert.ok(callbacks('script').includes('sheet:menu'));
+ assert.ok(!callbacks('kit').includes('sheet:menu'));assert.ok(callbacks('kit').includes('nav:event'));assert.ok(callbacks('kit').includes('export:menu'));assert.ok(callbacks('script').includes('nav:event'));
  const f=fixture();f.store.put(87,{step:'ready',format:'kit',language:'ru',result:'Готовый комплект.'});f.dialogue.accept(send('/sheets'));assert.match(latest(f),/«Сценарий» форматына арналған/);assert.equal(f.store.job(87),null);
 });
 test('fact evidence is bounded, retained with history context, and forwarded to a new generation',()=>{

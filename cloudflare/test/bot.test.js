@@ -168,7 +168,7 @@ test('bad provider credentials preserve the brief for manual retry', async () =>
   assert.equal(f.store.job(10), null); assert.equal(f.store.get(10).brief, 'Описание'); assert.ok(f.sent.some(s => /API кілтін/.test(s.payload.text)));
 });
 test('webhook acknowledges durable acceptance before slow delivery finishes', async () => {
-  const f = fixture(); let release; f.bot.telegram = () => new Promise(resolve => { release = resolve; });
+  const f = fixture(); let release,first=true; f.bot.telegram = () => {if(first){first=false;return new Promise(resolve => { release = resolve; });}return Promise.resolve({});};
   const response = await f.bot.fetch(new Request('https://bot/telegram', { method: 'POST', body: JSON.stringify(message('/start')) }));
   assert.equal(response.status, 200); assert.ok(f.alarm()); assert.ok(f.store.counts().outbox); release({}); await Promise.all(f.background);
 });
