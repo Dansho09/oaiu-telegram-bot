@@ -2,7 +2,7 @@ import { Store, Dialogue, SYSTEM, RETRY_BUTTONS, resultButtons, messagesFor, out
 import { renderScenario, isScenario, timeline, scriptSchema, scriptStructurePrompt, renderStructuredScenario } from './scenario.js';
 import { buildDocument } from './exports.js';
 import { MAX_DOCX_BYTES, ImportError, importIsCurrent, completeDocumentImport, failDocumentImport } from './imports.js';
-import { MAX_VOICE_BYTES, VoiceError, voiceIsCurrent, readVoiceBytes, completeVoice, failVoice } from './voice.js';
+import { MAX_VOICE_BYTES, VoiceError, voiceIsCurrent, readVoiceBytes, completeVoice, failVoice, transcriptionOptions } from './voice.js';
 import { OperationsConflict } from './operations.js';
 import { applyAwardsToStructured } from './awards.js';
 
@@ -226,7 +226,7 @@ export class OaiuBot {
       form.set('file', new Blob([bytes], { type: payload.mime_type || 'audio/ogg' }), 'voice.ogg');
       form.set('model', this.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3');
       form.set('response_format', 'verbose_json'); form.set('temperature', '0');
-      form.set('prompt', 'OAIU университеті. Іс-шара, сценарий, жүргізуші, басталу уақыты, акт залы, волейбол, марапаттау.');
+      for (const [key,value] of Object.entries(transcriptionOptions(payload.language))) form.set(key,value);
       stage = 'groq_transcription';
       let data;
       try { response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${this.env.GROQ_API_KEY}` }, body: form, signal: AbortSignal.timeout(60000) }); data = await response.json(); }
