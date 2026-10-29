@@ -1,4 +1,5 @@
 import { mentionedDuration } from './scenario.js';
+const HOME_BUTTONS = [[{ text: '🏠 Басты мәзір', callback_data: 'nav:home' }]];
 
 export const MAX_VOICE_BYTES = 5 * 1024 * 1024;
 export const MAX_VOICE_SECONDS = 180;
@@ -81,9 +82,9 @@ export function completeVoice(store,chat,payload,data){
 }
 export function handleVoice(dialogue,chat,text,callback,command,voice=null){
  const store=dialogue.store,s=store.get(chat);
- if(command==='/voice') {store.send(chat,'Дауыстық тапсырма\n\n3 минутқа және 5 МБ-қа дейінгі Telegram дауыстық хабарламасын жіберіңіз. Іс-шараның атауын, күнін, орнын, ұзақтығын және керек мәтін түрін айтыңыз. Дыбыс тілі әдепкіде қазақша; растау алдында орысша, ағылшынша не аралас тілді таңдауға болады. Дыбысты Groq қызметіне жіберуді растаған соң, танылған мәтінді тексеріп, түзете аласыз.');return true;}
+ if(command==='/voice') {store.send(chat,'Дауыстық тапсырма\n\n3 минутқа және 5 МБ-қа дейінгі Telegram дауыстық хабарламасын жіберіңіз. Іс-шараның атауын, күнін, орнын, ұзақтығын және керек мәтін түрін айтыңыз. Дыбыс тілі әдепкіде қазақша; растау алдында орысша, ағылшынша не аралас тілді таңдауға болады. Дыбысты Groq қызметіне жіберуді растаған соң, танылған мәтінді тексеріп, түзете аласыз.',[[{text:'🏠 Басты мәзір',callback_data:'nav:home'}]],null,false);return true;}
  if(voice){
-  if(!['type','brief','ready','voice_consent','voice_loading','voice_review','voice_edit'].includes(s.step)){store.send(chat,'Алдымен ағымдағы баптауды аяқтаңыз немесе /new арқылы жаңа тапсырма бастаңыз, содан кейін дауыстық хабарлама жіберіңіз.');return true;}
+  if(!['type','brief','ready','voice_consent','voice_loading','voice_review','voice_edit'].includes(s.step)){store.send(chat,'Алдымен ағымдағы баптауды аяқтаңыз. Жаңа тапсырма керек болса, «Басты мәзір» арқылы бастаңыз, содан кейін дауыстық хабарлама жіберіңіз.',HOME_BUTTONS);return true;}
   let valid;try{valid=validateVoice(voice);}catch(e){if(!(e instanceof VoiceError))throw e;store.send(chat,e.message);return true;}
   store.cancel(chat);cancelVoiceEffects(store,chat);
   const dateParts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Almaty',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
@@ -122,6 +123,6 @@ export function handleVoice(dialogue,chat,text,callback,command,voice=null){
   if(!text||[...text].length>3000){store.send(chat,'Түзетілген мәтін 1–3000 таңба болуы керек.');return true;}
   const next={...s,step:'voice_review',voice_request:{...s.voice_request,text}};store.put(chat,next);showPreview(store,chat,next);return true;
  }
- if(!command&&!callback&&s.step?.startsWith('voice_')){store.send(chat,'Дауыстық тапсырманы жоғарыдағы батырмалармен растаңыз не тоқтатыңыз. Жаңа тапсырма: /new');return true;}
+ if(!command&&!callback&&s.step?.startsWith('voice_')){store.send(chat,'Дауыстық тапсырманы жоғарыдағы батырмалармен растаңыз не тоқтатыңыз. Басқа әрекет үшін «Басты мәзір» ашыңыз.',HOME_BUTTONS);return true;}
  return false;
 }

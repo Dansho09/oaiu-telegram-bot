@@ -1,4 +1,5 @@
 import { choose, selectedPeople, personName, personRole } from './directory.js';
+const HOME_BUTTONS = [[{ text: '🏠 Басты мәзір', callback_data: 'nav:home' }]];
 
 export const isScenario = s => ['script', 'kit'].includes(s.format);
 export const PRESETS = {
@@ -311,7 +312,7 @@ function showProgramBlock(store, chat, session, block) {
 export function handleProgram(dialogue, chat, text, callback) {
   const store = dialogue.store; let session = store.get(chat);
   if (!callback.startsWith('program:') && !session.step?.startsWith('program_')) return false;
-  if (!isScenario(session)) { store.send(chat, interfaceText(session, 'Конструктор доступен для сценария: /new', 'Құрастыру сценарий үшін қолжетімді: /new', 'Choose Script to use the program builder: /new')); return true; }
+  if (!isScenario(session)) { store.send(chat, interfaceText(session, 'Конструктор доступен для сценария: /new', 'Бағдарламаны құрастыру үшін алдымен «Басты мәзірден» сценарий дайындаңыз.', 'Choose Script to use the program builder: /new'), HOME_BUTTONS); return true; }
   if (callback === 'program:open') {
     store.cancel(chat);
     const next = { ...session, script_editing: Boolean(session.result) || session.script_editing };
@@ -401,7 +402,7 @@ export function handleProgram(dialogue, chat, text, callback) {
     blocks[index] = { ...block, titles: Array(3).fill(text.trim()) };
     if (!saveProgram(store, chat, session, blocks)) invalidTotal(); return true;
   }
-  store.send(chat, interfaceText(session, 'Выберите блок кнопкой. «Готово» — сохранить программу, /cancel — новая задача.', 'Батырмамен бөлімді таңдаңыз. «Дайын» — сақтау, /cancel — жаңа тапсырма.', 'Choose a segment using a button. Done saves the program; /cancel starts a new task.')); return true;
+  store.send(chat, interfaceText(session, 'Выберите блок кнопкой. «Готово» — сохранить программу, /cancel — новая задача.', 'Батырмамен бөлімді таңдаңыз. «Бағдарламаны сақтау» — өзгерістерді сақтау. Басқа әрекет үшін «Басты мәзір» ашыңыз.', 'Choose a segment using a button. Done saves the program; /cancel starts a new task.'), HOME_BUTTONS); return true;
 }
 
 export function showProfiles(store, chat, session) {
@@ -432,7 +433,7 @@ export function handleScenario(dialogue, chat, text, callback) {
   if (handleProgram(dialogue, chat, text, callback)) return true;
   const store = dialogue.store, session = store.get(chat);
   if (!callback.startsWith('event:') && !session.step?.startsWith('event_')) return false;
-  if (!isScenario(session)) { store.send(chat, interfaceText(session, 'Сначала выберите «Сценарий»: /new', 'Алдымен «Сценарий» таңдаңыз: /new', 'Choose Script first: /new')); return true; }
+  if (!isScenario(session)) { store.send(chat, interfaceText(session, 'Сначала выберите «Сценарий»: /new', 'Алдымен «Басты мәзірден» сценарий дайындаңыз.', 'Choose Script first: /new'), HOME_BUTTONS); return true; }
   const [action, value] = callback.slice(6).split(':');
   if (callback) {
     if (action === 'config') { store.cancel(chat); showSettings(store, chat, { ...session, script_editing: Boolean(session.result) }); return true; }
@@ -480,6 +481,6 @@ export function handleScenario(dialogue, chat, text, callback) {
     else showSettings(store, chat, { ...session, host_names: names });
   } else if (session.step === 'event_stage_custom') {
     if (text && [...text].length <= 500) showSettings(store, chat, { ...session, stage_key: 'custom', stage_note: text }); else store.send(chat, interfaceText(session, 'Опишите выход и уход текстом до 500 символов.', 'Шығу мен түсуді 500 таңбаға дейін жазыңыз.', 'Describe entry and exit in up to 500 characters.'));
-  } else store.send(chat, interfaceText(session, 'Выберите настройку кнопкой выше. Начать заново: /new', 'Жоғарыдағы батырмамен таңдаңыз. Жаңадан бастау: /new', 'Choose an option above, or use /new.'));
+  } else store.send(chat, interfaceText(session, 'Выберите настройку кнопкой выше. Начать заново: /new', 'Баптауды жоғарыдағы батырмамен таңдаңыз. Басқа әрекет үшін «Басты мәзір» ашыңыз.', 'Choose an option above, or use /new.'), HOME_BUTTONS);
   return true;
 }

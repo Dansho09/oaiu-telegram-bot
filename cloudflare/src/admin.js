@@ -2,20 +2,20 @@ import { catalog, directoryRoleKk, importedRoleKk } from './directory.js';
 import { handleImport, clearImport } from './imports.js';
 
 export const PUBLIC_COMMANDS = [
-  ['tools', 'Ұйымдастырушы құралдары'], ['emergency', 'Жедел өзгеріс'], ['rehearse', 'Репетиция'], ['tournament', 'Турнир кестесі'], ['locks', 'Бекітілген мәтін'], ['awards', 'Марапаттау шебері'], ['guests', 'Қонақтар мәртебесі'], ['voice', 'Дауыспен тапсырма'],
-  ['start', 'Жұмысты бастау'], ['new', 'Жаңа мәтін жасау'], ['people', 'Басшылық пен кафедралар'], ['history', 'Соңғы нобайлар'], ['word', 'Word жүктеп алу'], ['pdf', 'PDF жүктеп алу'], ['program', 'Бағдарламаны құрастыру'], ['sheets', 'Ұйымдастырушыларға арналған парақтар'], ['check', 'Іс-шара алдындағы тексеріс'], ['help', 'Қолдану нұсқаулығы'], ['privacy', 'Деректерді өңдеу'], ['delete', 'Мәтіндерімді жою'], ['cancel', 'Ағымдағы тапсырмадан бас тарту'],
+  ['start', 'Басты мәзір'], ['help', 'Қалай қолданамын?'],
 ].map(([command, description]) => ({ command, description }));
 
 export function ownerIdentity(store, env, chat, sender, claim = false) {
   if (!sender || sender.is_bot || !Number.isSafeInteger(sender.id) || sender.id !== chat) return false;
   const bound = store.meta('admin_owner_id');
   if (bound !== null) {
-    if (bound === sender.id && claim) store.effect(chat, 'commands', { scope: { type: 'chat', chat_id: chat }, commands: [...PUBLIC_COMMANDS, { command: 'admin', description: 'Жеке басқару панелі' }] });
+    if (bound === sender.id && (claim||store.meta('admin_commands_version')!==2)) {store.setMeta('admin_commands_version',2);store.effect(chat, 'commands', { scope: { type: 'chat', chat_id: chat }, commands: [...PUBLIC_COMMANDS, { command: 'admin', description: 'Жеке басқару панелі' }] });}
     return bound === sender.id;
   }
   const expected = String(env.BOT_OWNER_USERNAME || '').replace(/^@/, '').toLowerCase();
   if (!claim || !expected || String(sender.username || '').toLowerCase() !== expected) return false;
   store.setMeta('admin_owner_id', sender.id);
+  store.setMeta('admin_commands_version',2);
   store.effect(chat, 'commands', { scope: { type: 'chat', chat_id: chat }, commands: [...PUBLIC_COMMANDS, { command: 'admin', description: 'Менің басқару панелім' }] });
   return true;
 }

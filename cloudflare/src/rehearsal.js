@@ -1,4 +1,5 @@
 import { resultSession } from './companion.js';
+const HOME_BUTTONS = [[{ text: '🏠 Басты мәзір', callback_data: 'nav:home' }]];
 
 const PACES = { slow: { label: 'Баяу', words: 100 }, normal: { label: 'Қалыпты', words: 125 }, fast: { label: 'Жылдам', words: 150 } };
 const b = (text, callback_data) => ({ text, callback_data });
@@ -39,8 +40,8 @@ export function estimateRehearsal(session, pace = 'normal', role = 'all') {
 }
 function clear(session) { const next = { ...session, step: session.rehearsal_state?.return_step || 'ready' }; delete next.rehearsal_state; return next; }
 function ready(store, chat, session) {
-  if (!session.result) { store.send(chat, 'Алдымен мәтін не сценарий жасаңыз: /new'); return false; }
-  if (store.job(chat) || !['ready', 'rehearsal'].includes(session.step)) { store.send(chat, 'Алдымен ағымдағы тапсырманы не баптауды аяқтаңыз. Содан кейін /rehearse ашыңыз.'); return false; }
+  if (!session.result) { store.send(chat, 'Алдымен «Басты мәзірден» мәтін не сценарий дайындаңыз.', HOME_BUTTONS); return false; }
+  if (store.job(chat) || !['ready', 'rehearsal'].includes(session.step)) { store.send(chat, 'Алдымен ағымдағы тапсырманы не баптауды аяқтаңыз. Содан кейін «Репетиция» бөлімін ашыңыз.', HOME_BUTTONS); return false; }
   return true;
 }
 function summary(store, chat, session) {
@@ -79,7 +80,7 @@ export function handleRehearsal(dialogue, chat, text, data, command) {
     summary(store, chat, next); return true;
   }
   const [, action, revision, value] = data.split(':'), r = session.rehearsal_state;
-  if (session.step !== 'rehearsal' || !r || r.token !== revision || r.source_result !== session.result) { store.send(chat, 'Бұл репетиция батырмасы ескірген. Қайта ашыңыз: /rehearse'); return true; }
+  if (session.step !== 'rehearsal' || !r || r.token !== revision || r.source_result !== session.result) { store.send(chat, 'Бұл репетиция батырмасы ескірген. «Репетиция» бөлімін қайта ашыңыз.', HOME_BUTTONS); return true; }
   if (action === 'close') { store.put(chat, clear(session)); store.send(chat, 'Репетиция аяқталды. Дайын мәтін сақталды.'); return true; }
   if (action === 'pace' && Object.hasOwn(PACES, value)) { r.pace = value; summary(store, chat, session); return true; }
   if (action === 'summary') { summary(store, chat, session); return true; }

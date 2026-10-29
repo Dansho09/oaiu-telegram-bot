@@ -1,4 +1,5 @@
 import { parseStart, clockLabel, programBlocks, validProgram } from './scenario.js';
+const HOME_BUTTONS = [[{ text: '🏠 Басты мәзір', callback_data: 'nav:home' }]];
 
 const b = (text, callback_data) => ({ text, callback_data });
 const revision = () => crypto.randomUUID().slice(0, 8);
@@ -103,15 +104,15 @@ export function handleTournament(dialogue, chat, text, data, command) {
   const store = dialogue.store; let session = store.get(chat);
   if (command !== '/tournament' && !data.startsWith('tournament:') && !(session.step?.startsWith('tournament_') && !command && !data)) return false;
   if (command === '/tournament' || data === 'tournament:open' || data.startsWith('tournament:restart:')) {
-    if (store.job(chat) || !['ready', 'type', 'tournament_preview', 'tournament_apply'].includes(session.step)) { store.send(chat, 'Алдымен ағымдағы тапсырманы не баптауды аяқтаңыз. Содан кейін /tournament ашыңыз.'); return true; }
-    if (data.startsWith('tournament:restart:') && data.split(':')[2] !== session.tournament_state?.token) { store.send(chat, 'Бұл батырма ескірген. Қайта ашыңыз: /tournament'); return true; }
+    if (store.job(chat) || !['ready', 'type', 'tournament_preview', 'tournament_apply'].includes(session.step)) { store.send(chat, 'Алдымен ағымдағы тапсырманы не баптауды аяқтаңыз. Содан кейін «Турнир кестесі» бөлімін ашыңыз.', HOME_BUTTONS); return true; }
+    if (data.startsWith('tournament:restart:') && data.split(':')[2] !== session.tournament_state?.token) { store.send(chat, 'Бұл батырма ескірген. «Турнир кестесі» бөлімін қайта ашыңыз.', HOME_BUTTONS); return true; }
     session = { ...session, tournament_state: { token: revision(), return_step: session.result ? 'ready' : 'type', source_result: session.result || null, config: { format: 'roundrobin', courts: 1, match_minutes: 20, break_minutes: 5, start: null } } };
     show(store, chat, session, 'teams', 'Командаларды әр жолға не нүктелі үтірмен бөліп жазыңыз: 2–16 команда. Нақты атаулар белгісіз болса, тек санын жіберіңіз: мысалы, 6. Әр атау 70 таңбаға дейін.', [[b('❌ Бас тарту', cb(session, 'cancel'))]]); return true;
   }
   const state = session.tournament_state;
-  if (!state || !session.step?.startsWith('tournament_')) { store.send(chat, 'Кестені қайта ашыңыз: /tournament'); return true; }
+  if (!state || !session.step?.startsWith('tournament_')) { store.send(chat, '«Турнир кестесі» бөлімін қайта ашыңыз.', HOME_BUTTONS); return true; }
   const [, action, token, value] = data.split(':');
-  if (data && (token !== state.token || state.source_result !== (session.result || null))) { store.send(chat, 'Бұл турнир батырмасы ескірген. Қайта ашыңыз: /tournament'); return true; }
+  if (data && (token !== state.token || state.source_result !== (session.result || null))) { store.send(chat, 'Бұл турнир батырмасы ескірген. «Турнир кестесі» бөлімін қайта ашыңыз.', HOME_BUTTONS); return true; }
   if (action === 'cancel') { store.put(chat, leave(session)); store.send(chat, 'Кесте баптауы жабылды. Бұрынғы мәтін өзгерген жоқ.'); return true; }
   const config = state.config;
   if (session.step === 'tournament_teams' && !data) {
@@ -142,7 +143,7 @@ export function handleTournament(dialogue, chat, text, data, command) {
     if (!pending) store.effect(chat, 'document', { chat_id: chat, text: content, format: value, title: 'OAIU турнир кестесі', filename: 'OAIU-tournament' }); return true;
   }
   if (session.step === 'tournament_preview' && action === 'save') {
-    session.tournament = structuredClone(config); store.put(chat, leave(session)); store.send(chat, 'Турнир кестесі сақталды. Қайта қарау не өзгерту: /tournament. Дайын мәтін өзгерген жоқ. Келесі сценарийге осы деректерді қолдануға болады.'); return true;
+    session.tournament = structuredClone(config); store.put(chat, leave(session)); store.send(chat, 'Турнир кестесі сақталды. Оны «Турнир кестесі» бөлімінде қарай не өзгерте аласыз. Дайын мәтін өзгерген жоқ. Келесі сценарийге осы деректерді қолдануға болады.', HOME_BUTTONS); return true;
   }
   if (session.step === 'tournament_preview' && action === 'apply_preview') {
     if (session.format !== 'script' || !session.result || store.job(chat)) { store.send(chat, 'Қолдану үшін дайын сценарий керек. Қазір кестені жеке сақтауға не жүктеуге болады.'); return true; }
@@ -155,6 +156,6 @@ export function handleTournament(dialogue, chat, text, data, command) {
     const next = { ...leave(session), tournament: state.apply.tournament, event_minutes: state.apply.minutes, program_blocks: state.apply.blocks };
     store.put(chat, next); dialogue.generate(chat, next, 'Расталған турнир кестесіне сай матч туралы репликаларды жаңарт. Нақты командалар мен матчтар ретін сақта. Жеңімпаздарды, ұпайларды және нәтижелерді ойдан қоспа. Қалған бөлімдерді, бекітілген фрагменттерді және расталған деректерді сақта.'); return true;
   }
-  if (!data) store.send(chat, 'Жоғарыдағы турнир батырмаларын қолданыңыз. Шығу: /cancel');
+  if (!data) store.send(chat, 'Жоғарыдағы турнир батырмаларын қолданыңыз. Басқа әрекет үшін «Басты мәзір» ашыңыз.', HOME_BUTTONS);
   return true;
 }

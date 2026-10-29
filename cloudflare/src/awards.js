@@ -1,5 +1,6 @@
 import { catalog, selectedPeople, directoryRoleKk, personName } from './directory.js';
 import { programBlocks, timeline, validMinutes } from './scenario.js';
+const HOME_BUTTONS = [[{ text: '🏠 Басты мәзір', callback_data: 'nav:home' }]];
 
 const MAX_RECIPIENTS = 60, MAX_INPUT = 6000;
 const btn = (text, callback_data) => ({ text, callback_data });
@@ -117,7 +118,7 @@ function proposeApply(store, chat, session) {
   const blocks = programBlocks(session), index = blocks.findIndex(block => block.titles.some(title => /награж|марапат|awards/iu.test(title))), needed = duration(session.awards_data);
   if (index >= 0 && index < (session.emergency_state?.completed || 0)) { store.send(chat, 'Марапаттау бөлімі аяқталған деп белгіленген. Оны қайта жазуға болмайды. Бөлек марапаттау файлын жүктеңіз немесе жедел өзгерістегі орындалу белгісін тексеріңіз.'); return; }
   const canonical = awardSpokenLines(session.awards_data, session.host_count);
-  if (index >= 0 && (session.locked_fragments || []).some(lock => lock.kind === 'script' && lock.block_id === blocks[index].id && canonical[lock.host] !== lock.text)) { store.send(chat, 'Жаңа марапаттау бекітілген репликаға қайшы. Алдымен /locks арқылы марапаттау бөліміндегі үзіндінің құлпын алыңыз. Дайын мәтін өзгерген жоқ.'); return; }
+  if (index >= 0 && (session.locked_fragments || []).some(lock => lock.kind === 'script' && lock.block_id === blocks[index].id && canonical[lock.host] !== lock.text)) { store.send(chat, 'Жаңа марапаттау бекітілген репликаға қайшы. Алдымен «Бекітілген мәтін» бөлімінде марапаттау үзіндісінің құлпын алыңыз. Дайын мәтін өзгерген жоқ.', HOME_BUTTONS); return; }
   let next;
   if (index >= 0) next = blocks.map((block, i) => i === index ? { ...block, minutes: Math.max(block.minutes, needed) } : block);
   else {
@@ -134,18 +135,18 @@ export function handleAwards(dialogue, chat, text, callback, command) {
   const store = dialogue.store, session = store.get(chat), owns = session.step?.startsWith('awards_');
   if (command !== '/awards' && !callback.startsWith('awards:') && !(owns && !command && !callback)) return false;
   if (command && command !== '/awards') return false;
-  if (store.job(chat)) { store.send(chat, 'Алдымен ағымдағы мәтіннің дайын болуын күтіңіз немесе /cancel арқылы тоқтатыңыз.'); return true; }
+  if (store.job(chat)) { store.send(chat, 'Алдымен ағымдағы мәтіннің дайын болуын күтіңіз. Басқа әрекеттер «Басты мәзірде» қолжетімді.', HOME_BUTTONS); return true; }
   if (command === '/awards' || callback === 'awards:open') {
-    if (!owns && session.step !== 'type' && session.step !== 'ready' && session.step !== 'brief') { store.send(chat, 'Алдымен ағымдағы баптауды аяқтаңыз немесе /cancel арқылы тоқтатыңыз.'); return true; }
+    if (!owns && session.step !== 'type' && session.step !== 'ready' && session.step !== 'brief') { store.send(chat, 'Алдымен ағымдағы баптауды аяқтаңыз. Басқа әрекет үшін «Басты мәзір» ашыңыз.', HOME_BUTTONS); return true; }
     const next = { ...session, step: 'awards_review', awards_work: structuredClone(validData(session.awards_data) ? session.awards_data : emptyData()), awards_ui: { revision: id(), return_step: owns ? session.awards_ui?.return_step || 'type' : session.step || 'type' } };
     show(store, chat, next); return true;
   }
-  if (!session.awards_ui) { store.send(chat, 'Бұл батырма ескірді. Марапаттауды қайта ашыңыз: /awards'); return true; }
+  if (!session.awards_ui) { store.send(chat, 'Бұл батырма ескірді. «Марапаттау» бөлімін қайта ашыңыз.', HOME_BUTTONS); return true; }
   const [, action, revision, value] = callback.split(':');
-  if (callback && (revision !== session.awards_ui.revision || !owns && session.step !== session.awards_ui.return_step)) { store.send(chat, 'Бұл батырма ескірді. Марапаттауды қайта ашыңыз: /awards'); return true; }
+  if (callback && (revision !== session.awards_ui.revision || !owns && session.step !== session.awards_ui.return_step)) { store.send(chat, 'Бұл батырма ескірді. «Марапаттау» бөлімін қайта ашыңыз.', HOME_BUTTONS); return true; }
   try {
     if (callback) {
-      if (action === 'close' || action === 'cancel') { const next = cleanUi(session); next.step = session.awards_ui.return_step || 'type'; store.put(chat, next); store.send(chat, action === 'cancel' ? 'Марапаттау баптаулары сақталмады. Дайын мәтін өзгермеді.' : 'Марапаттау сақталды. Құралдарды /tools арқылы ашыңыз. Дайын сценарийіңіз болса, марапаттауды /awards арқылы қосуға болады.'); return true; }
+      if (action === 'close' || action === 'cancel') { const next = cleanUi(session); next.step = session.awards_ui.return_step || 'type'; store.put(chat, next); store.send(chat, action === 'cancel' ? 'Марапаттау баптаулары сақталмады. Дайын мәтін өзгермеді.' : 'Марапаттау сақталды. «Марапаттау» бөлімінен оны дайын сценарийге қоса аласыз.', HOME_BUTTONS); return true; }
       if (action === 'edit') { show(store, chat, { ...session, awards_work: structuredClone(session.awards_data) }); return true; }
       if (action === 'back') { show(store, chat, session); return true; }
       if (action === 'recipients' || action === 'prize' || action === 'seconds' || action === 'presenter_custom') {
@@ -211,7 +212,7 @@ export function handleAwards(dialogue, chat, text, callback, command) {
       if (unsafe(text) || [...clean(text)].length > 100 || !text.trim()) invalid('Марапат атауы 100 таңбадан аспасын. Телефон не сілтеме қоспаңыз.'); data.prize = /^(?:жоқ|белгісіз|нет|none)$/iu.test(text.trim()) ? '' : clean(text);
     } else if (session.step === 'awards_presenter') {
       const parts = text.split(';').map(clean); if (parts.length !== 2 || !validName(parts[0]) || !parts[1] || [...parts[1]].length > 160 || parts.some(unsafe)) invalid('Аты-жөні; лауазымы керек. Телефон, пошта немесе жеке нөмір қоспаңыз.'); data.presenter = { name: parts[0], role: parts[1] };
-    } else { store.send(chat, 'Марапаттауды батырмалармен баптаңыз немесе /cancel арқылы шығыңыз.'); return true; }
+    } else { store.send(chat, 'Марапаттауды жоғарыдағы батырмалармен баптаңыз. Басқа әрекет үшін «Басты мәзір» ашыңыз.', HOME_BUTTONS); return true; }
     show(store, chat, { ...session, awards_work: data });
   } catch (error) { if (!(error instanceof AwardsError)) throw error; store.send(chat, error.message); }
   return true;

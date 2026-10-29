@@ -11,12 +11,13 @@ import { handleRehearsal } from './rehearsal.js';
 import { handleTournament, tournamentPrompt } from './tournament.js';
 import { handleAwards, awardsPrompt } from './awards.js';
 import { handleVoice } from './voice.js';
+import { HOME_KEY, showHome, showFormats, handleNavigation } from './navigation.js';
 
 export { SYSTEM, RESULT_BUTTONS };
 // Interface messages always use Kazakh; generated text has its own language.
 const choose = (_session, _ru, kk) => kk;
 export function resultButtons(session) {
-  return [...RESULT_BUTTONS, [{ text: '✅ Сөз алдындағы тексеру', callback_data: 'check:open' }], [{ text: '👥 Басшылық / қатысушылар', callback_data: 'staff:open' }], ...(isScenario(session) ? [[{ text: '🧩 Бағдарлама құрастыру', callback_data: 'program:open' }, ...(session.format === 'script' ? [{ text: '👥 Командаға жеке парақтар', callback_data: 'sheet:menu' }] : [])], [{ text: '⚙️ Уақыт, жүргізушілер, сахна', callback_data: 'event:config' }]] : []), [{ text: '🧰 Ұйымдастырушы құралдары', callback_data: 'tools:open' }]];
+  return [[{text:'✏️ Өзгерту',callback_data:'nav:edit'},{text:'📥 Жүктеу',callback_data:'export:menu'}],...(isScenario(session)?[[{text:'📋 Іс-шара баптаулары',callback_data:'nav:event'}]]:[]),[{text:HOME_KEY,callback_data:'nav:home'}]];
 }
 export const RETRY_BUTTONS = [[{ text: 'Қайталау', callback_data: 'retry:yes' }]];
 export const SCHEMA = [
@@ -33,6 +34,7 @@ export const SCHEMA = [
   'CREATE INDEX IF NOT EXISTS seen_update_age ON seen_updates(created)',
   'CREATE TABLE IF NOT EXISTS outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,chat_id INTEGER,kind TEXT NOT NULL,payload TEXT NOT NULL,job_id TEXT,due INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0)',
   'CREATE INDEX IF NOT EXISTS outbox_owner ON outbox(chat_id,id)',
+  'CREATE TABLE IF NOT EXISTS navigation_views(chat_id INTEGER PRIMARY KEY,value TEXT NOT NULL)',
 ];
 
 export function splitText(text, limit = 3600) {
@@ -113,8 +115,10 @@ export class Store {
   effect(chat, kind, payload, jobId = null) {
     this.exec('INSERT INTO outbox(chat_id,kind,payload,job_id) VALUES (?,?,?,?)', chat, kind, JSON.stringify(payload), jobId);
   }
-  send(chat, text, buttons = null, jobId = null) {
+  send(chat, text, buttons = null, jobId = null, remember = true) {
     if (buttons) buttons = localizeButtons(buttons, this.get(chat), this);
+    const navigationOnly=buttons?.length&&buttons.flat().every(button=>button.callback_data?.startsWith('nav:'));
+    if(remember&&!jobId&&!navigationOnly&&String(text).length<=8000)this.exec('INSERT OR REPLACE INTO navigation_views VALUES (?,?)',chat,JSON.stringify({step:this.get(chat).step,text,buttons}));
     const chunks = splitText(text);
     chunks.forEach((chunk, i) => this.effect(chat, 'message', {
       chat_id: chat, text: chunk, link_preview_options: { is_disabled: true },
@@ -168,9 +172,12 @@ export class Dialogue {
       return true;
     });
   }
-  menu(chat, owner = false) {
+  resultButtons(session) { return resultButtons(session); }
+  menu(chat, owner = false, format = null) {
     this.store.cancel(chat); this.store.put(chat, { step: 'type', language: 'kk' });
-    this.store.send(chat, 'Сәлем! Мен OAIU көмекшісімін. Университет іс-шарасына сөз, уақыт кестесі бар сценарий және басқа мәтіндер дайындаймын.\n\nНе дайындаймыз?', [...keyboard(FORMATS, 'type'), [{ text: '👥 Басшылық / кафедралар', callback_data: 'staff:open' }], [{ text: '🧰 Ұйымдастырушы құралдары', callback_data: 'tools:open' }], ...(owner ? [[{ text: '⚙️ Басқару панелім', callback_data: 'admin:open' }]] : [])]);
+    this.store.exec('DELETE FROM navigation_views WHERE chat_id=?',chat);
+    if(format==='script')this.process(chat,'','type:script',null);
+    else showFormats(this,chat);
   }
   askTone(chat, session) {
     const tones = session.language === 'kk' ? { warm: 'Жылы', formal: 'Салтанатты', inspiring: 'Шабыттандыратын', business: 'Іскерлік' } : TONES;
@@ -265,40 +272,39 @@ export class Dialogue {
       if (command === '/start' && text.split(/\s+/)[1] === this.env.BOT_ACCESS_CODE) s.exec('INSERT OR IGNORE INTO authorized VALUES (?)', chat);
       else { s.send(chat, 'Бот шақыру арқылы жұмыс істейді. Иесі берген кіру сілтемесін ашыңыз.'); return; }
     }
+    if(!callback&&text===HOME_KEY){callback='nav:home';text='';command='';}
     const owner = ownerIdentity(s, this.env, chat, sender, command === '/admin');
+    if(command==='/start'){showHome(this,chat,owner,true);return;}
+    if (['/new', '/cancel'].includes(command) || callback === 'new:yes') { this.menu(chat, owner); return; }
+    const navigationAlias={'/menu':'nav:home','/help':'nav:help','/tools':'nav:organize'}[command];
+    if(navigationAlias){callback=navigationAlias;command='';}
+    const navigationCommand={'nav:history':'/history','nav:voice':'/voice','nav:privacy':'/privacy','nav:delete':'/delete'}[callback];
+    if(navigationCommand){command=navigationCommand;callback='';}
+    if(handleNavigation(this,chat,callback,owner))return;
     if (handleAdmin(this, chat, text, callback, command, owner, document)) return;
-    if (['/start', '/new', '/cancel'].includes(command) || callback === 'new:yes') { this.menu(chat, owner); return; }
     const shortcut = { '/word': 'export:docx', '/pdf': 'export:pdf', '/txt': 'export:txt', '/check': 'check:open', '/sheets': 'sheet:menu', '/program': 'program:open' }[command];
     if (shortcut) { callback = shortcut; command = ''; }
-    if (command === '/help') { s.send(chat, 'Форматты, мәтін тілін, көлемі мен мәнерін таңдап, іс-шараны сипаттаңыз. Әдепкі мәтін тілі — қазақша. Сценарийде ұзақтығын, басталу уақытын, жүргізушілерді және шығу жолдарын баптай аласыз. Басшылықты батырмамен немесе /people арқылы таңдаңыз. Дайын мәтінге түзетуді жай хабарламамен жіберіңіз.\n\n/new — жаңа мәтін\n/people — басшылық пен кафедралар\n/history — соңғы нобайлар\n/word · /pdf · /txt — дайын мәтінді жүктеу\n/program — бағдарламаны құрастыру\n/sheets — сценарий қатысушыларына жеке парақтар\n/tools — ұйымдастырушы құралдары\n/emergency — жедел өзгеріс\n/rehearse — репетиция\n/tournament — турнир кестесі\n/locks — бекітілген мәтін\n/awards — марапаттау шебері\n/guests — қонақтар мәртебесі\n/voice — дауыспен тапсырма\n/check — іс-шара алдындағы тексеру\n/privacy — деректерді өңдеу\n/delete — сақталған мәтіндерді өшіру\n/cancel — ағымдағы тапсырмадан бас тарту'); return; }
-    if (command === '/privacy') { s.send(chat, 'Хабарламалар Telegram арқылы өтеді. Мәтін жасау үшін іс-шара сипаттамасы, нақтылаулар және ағымдағы мәтін Groq қызметіне жіберіледі; Telegram идентификаторы модельге берілмейді. Cloudflare ішінде ағымдағы тапсырма мен мәтіннің соңғы 10 нұсқасына дейін сақталады. Word пен PDF сыртқы түрлендіргішсіз Cloudflare ішінде жасалады. Иесі DOCX жүктей алады: тексеріп, растаған соң ортақ анықтамалыққа аты-жөні мен лауазымдар, ал үлгілерге сценарий бөлімдерінің атаулары сақталады. Файлдың өзі сақталмайды. Дауыстық хабарлама келісіміңізбен Groq қызметіне тануға жіберіледі; дыбыс бот базасында сақталмайды. Танылған мәтін қолданар алдында көрсетіледі. Қонақтар мәртебесін, марапат алушылар тізімін және турнир командаларын тек өз тапсырмаңызда сақтаймын. /delete бот базасындағы өз деректеріңізді өшіреді; Telegram не Groq деректерін өшірмейді.'); return; }
-    if (command === '/delete') { s.send(chat, 'Ағымдағы тапсырма мен барлық сақталған нобайларыңызды бот базасынан өшірейін бе?', [[{ text: 'Мәтіндерімді өшіру', callback_data: 'delete:confirm' }, { text: 'Бас тарту', callback_data: 'delete:cancel' }]]); return; }
+    if (command === '/privacy') { s.send(chat, 'Хабарламалар Telegram арқылы өтеді. Мәтін жасау үшін іс-шара сипаттамасы, нақтылаулар және ағымдағы мәтін Groq қызметіне жіберіледі; Telegram идентификаторы модельге берілмейді. Cloudflare ішінде ағымдағы тапсырма мен мәтіннің соңғы 10 нұсқасына дейін сақталады. Word пен PDF сыртқы түрлендіргішсіз Cloudflare ішінде жасалады. Иесі DOCX жүктей алады: тексеріп, растаған соң ортақ анықтамалыққа аты-жөні мен лауазымдар, ал үлгілерге сценарий бөлімдерінің атаулары сақталады. Файлдың өзі сақталмайды. Дауыстық хабарлама келісіміңізбен Groq қызметіне тануға жіберіледі; дыбыс бот базасында сақталмайды. Танылған мәтін қолданар алдында көрсетіледі. Қонақтар мәртебесін, марапат алушылар тізімін және турнир командаларын тек өз тапсырмаңызда сақтаймын. «Деректерімді өшіру» бот базасындағы өз деректеріңізді өшіреді; Telegram не Groq деректерін өшірмейді.',[[{text:HOME_KEY,callback_data:'nav:home'}]],null,false); return; }
+    if (command === '/delete') { s.send(chat, 'Ағымдағы тапсырма мен барлық сақталған нобайларыңызды бот базасынан өшірейін бе?', [[{ text: 'Мәтіндерімді өшіру', callback_data: 'delete:confirm' }, { text: 'Бас тарту', callback_data: 'delete:cancel' }]],null,false); return; }
     if (callback === 'delete:confirm') {
-      s.cancel(chat); for (const table of ['sessions', 'drafts', 'quota', 'outbox']) s.exec(`DELETE FROM ${table} WHERE chat_id=?`, chat);
-      s.send(chat, 'Мәтіндеріңіз бот базасынан өшірілді. Жаңа мәтін: /new'); return;
+      s.cancel(chat); for (const table of ['sessions', 'drafts', 'quota', 'outbox','navigation_views']) s.exec(`DELETE FROM ${table} WHERE chat_id=?`, chat);
+      s.send(chat, 'Мәтіндеріңіз бот базасынан өшірілді.',[[{text:HOME_KEY,callback_data:'nav:home'}]],null,false); return;
     }
-    if (callback === 'delete:cancel') { s.send(chat, 'Сақталған мәтіндер өзгеріссіз қалды.'); return; }
+    if (callback === 'delete:cancel') { s.send(chat, 'Сақталған мәтіндер өзгеріссіз қалды.',[[{text:HOME_KEY,callback_data:'nav:home'}]],null,false); return; }
     if (handleCompanion(this, chat, text, callback, command)) return;
     if (command === '/history') {
       const rows = s.rows('SELECT id,title,created FROM drafts WHERE chat_id=? ORDER BY id DESC LIMIT 5', chat);
-      s.send(chat, rows.length ? 'Соңғы нобайларыңыз:' : 'Әзірге нобай жоқ. Алғашқысын жасау: /new', rows.length ? rows.map(d => [{ text: d.title.slice(0, 45) || d.created, callback_data: `history:${d.id}` }]) : null); return;
+      s.send(chat, rows.length ? 'Соңғы нобайларыңыз:' : 'Әзірге нобай жоқ. «Мәтін дайындау» арқылы алғашқы мәтінді жасаңыз.', [...rows.map(d => [{ text: d.title.slice(0, 45) || d.created, callback_data: `history:${d.id}` }]),[{text:HOME_KEY,callback_data:'nav:home'}]],null,false); return;
     }
     if (callback.startsWith('history:')) {
       const value = callback.slice(8);
       const draft = /^\d+$/.test(value) ? s.one('SELECT text,context FROM drafts WHERE chat_id=? AND id=?', chat, Number(value)) : null;
-      if (!draft) { s.send(chat, 'Бұл нобай қолжетімсіз. Тізімді жаңарту: /history'); return; }
+      if (!draft) { s.send(chat, 'Бұл нобай қолжетімсіз. Басты мәзірден «Менің мәтіндерім» бөлімін қайта ашыңыз.'); return; }
       s.cancel(chat);
       const session = { step: 'ready', format: 'speech', language: 'kk', tone: 'warm', length: '3', brief: 'Отредактировать сохранённый текст, сохранив содержащиеся в нём факты.', ...JSON.parse(draft.context || '{}'), result: draft.text };
       s.put(chat, session); s.send(chat, draft.text, resultButtons(session)); return;
     }
-    if (callback === 'tools:open' || command === '/tools') {
-      s.send(chat, 'Ұйымдастырушы құралдары\n\nСценарий дайын болса — жедел өзгеріс, репетиция және бекітілген мәтіндер қолжетімді. Турнир мен марапаттауды бөлек дайындауға да болады.', [
-        [{text:'🚨 Жедел өзгеріс',callback_data:'ops:open'},{text:'🎙 Репетиция',callback_data:'rehearsal:open'}],
-        [{text:'🏐 Турнир кестесі',callback_data:'tournament:open'},{text:'🔒 Бекітілген мәтін',callback_data:'lock:open'}],
-        [{text:'🏆 Марапаттау шебері',callback_data:'awards:open'},{text:'👥 Қонақтар мәртебесі',callback_data:'guest:open'}],
-        [{text:'🎤 Дауыспен тапсырма',callback_data:'voice:help'}],
-      ]); return;
-    }
+    if(callback==='tools:open'){handleNavigation(this,chat,'nav:organize',owner);return;}
     if (callback === 'voice:help') { callback = ''; command = '/voice'; }
     if (handleVoice(this, chat, text, callback, command, voice)) return;
     if (handleOperations(this, chat, text, callback, command)) return;
@@ -322,7 +328,7 @@ export class Dialogue {
       s.put(chat, { ...Object.fromEntries(['guest_statuses', 'guest_records', 'tournament', 'awards_data'].filter(key => session[key] !== undefined).map(key => [key, session[key]])), step: 'language', language: 'kk', format: value, people: session.people || [], custom_people: session.custom_people || [], directory_people: session.directory_people || [] }); s.send(chat, 'Мәтінді қай тілде дайындаймыз? Әдепкі тіл — қазақша.', keyboard(LANGUAGES, 'language', 3)); return;
     }
     if (kind === 'language') {
-      if (session.step !== 'language' || !Object.hasOwn(LANGUAGES, value)) { s.send(chat, 'Бұл батырма басқа тапсырмаға арналған. Жаңасын бастау: /new'); return; }
+      if (session.step !== 'language' || !Object.hasOwn(LANGUAGES, value)) { s.send(chat, 'Бұл батырма басқа тапсырмаға арналған. Басты мәзірден жаңа тапсырма бастаңыз.'); return; }
       if (isScenario(session)) { showProfiles(s, chat, { ...session, language: value }); return; }
       s.put(chat, { ...session, language: value, step: 'length' });
       s.send(chat, 'Қандай көлем керек? Сөз үшін — шамамен сөйлеу уақыты, басқа форматтар үшін — толықтық деңгейі.', keyboard({ 1: 'Қысқа · ≈1 минут', 3: 'Орташа · ≈3 минут', 5: 'Толық · ≈5 минут' }, 'length', 1)); return;
@@ -335,9 +341,9 @@ export class Dialogue {
       const next = enrichPeople({ ...session, tone: value, step: 'brief' }, session.brief || '', s);
       this.openPeople(chat, next, 'all', 'wizard'); return;
     }
-    if (callback === 'export:txt') { if (session.result) s.effect(chat, 'document', { chat_id: chat, text: session.result }); else s.send(chat, 'Алдымен мәтін жасаңыз: /new'); return; }
+    if (callback === 'export:txt') { if (session.result) s.effect(chat, 'document', { chat_id: chat, text: session.result }); else s.send(chat, 'Алдымен басты мәзірден мәтін дайындаңыз.'); return; }
     if (callback === 'again:yes' || callback === 'retry:yes') { if (session.brief) this.generate(chat, session, callback === 'retry:yes' ? session.pending_instruction ?? null : null); return; }
-    if (callback === 'edit:custom') { s.send(chat, session.result ? 'Ағымдағы мәтінде нені өзгерту керегін жазыңыз.' : 'Алдымен мәтін жасаңыз: /new'); return; }
+    if (callback === 'edit:custom') { s.send(chat, session.result ? 'Ағымдағы мәтінде нені өзгерту керегін жазыңыз.' : 'Алдымен басты мәзірден мәтін дайындаңыз.'); return; }
     if (kind === 'edit' || kind === 'translate') {
       if (!session.result) return;
       let instruction = ({ short: 'Сократи текущий текст примерно вдвое, сохранив ключевые мысли и факты. Язык не меняй.', formal: 'Сделай текст торжественнее, сохранив естественную речь, факты и язык.', thanks: 'Добавь уместную благодарность преподавателям. Сохрани язык, смысл и факты; имена не придумывай.', simple: 'Сделай текст менее официальным, живым и естественным. Сохрани язык и факты.' })[value];
@@ -345,8 +351,8 @@ export class Dialogue {
       if (instruction) this.generate(chat, session, instruction); return;
     }
     if (callback) return;
-    if (command) { s.send(chat, 'Мұндай команда әзірге жоқ. Нұсқаулық: /help'); return; }
-    if (!text) { s.send(chat, 'Әзірге мәтіндік хабарламалармен жұмыс істеймін. Іс-шараны сипаттаңыз немесе /new арқылы бастаңыз.'); return; }
+    if (command) { s.send(chat, 'Мұндай команда әзірге жоқ. Қажет әрекетті басты мәзірден таңдаңыз.',[[{text:HOME_KEY,callback_data:'nav:home'}]]); return; }
+    if (!text) { s.send(chat, 'Іс-шараны мәтінмен не дауыспен сипаттаңыз немесе басты мәзірден қажет әрекетті таңдаңыз.'); return; }
     if ([...text].length > 3000) { s.send(chat, 'Хабарламаны 3000 таңбаға дейін қысқартыңыз: негізгі деректер мен тілектерді қалдырыңыз.'); return; }
     if (session.step === 'ready' && session.result) this.generate(chat, session, text);
     else if (session.step === 'brief') this.generate(chat, { ...session, brief: text });
@@ -358,6 +364,6 @@ export class Dialogue {
         next.event_minutes ? showSettings(s, chat, next) : showDuration(s, chat, next);
       } else this.generate(chat, { ...session, step: 'brief', format: 'speech', language: 'kk', length: '3', tone: 'warm', brief: text });
     }
-    else s.send(chat, 'Алдымен жоғарыдағы батырмамен нұсқа таңдаңыз. Немесе қайта бастаңыз: /new');
+    else s.send(chat, 'Алдымен жоғарыдағы батырмамен нұсқа таңдаңыз. Қайта бастау үшін «Басты мәзір» батырмасын басыңыз.');
   }
 }

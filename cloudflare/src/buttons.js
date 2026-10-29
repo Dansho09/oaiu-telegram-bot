@@ -11,7 +11,7 @@ const STATIC = {
   'edit:short': '✂️ Қысқарту', 'edit:formal': '✨ Салтанатты ету', 'edit:thanks': '💐 Алғыс қосу',
   'edit:simple': '💬 Еркін стиль', 'edit:custom': '✏️ Өз түзетуім',
   'again:yes': '🔄 Басқа нұсқа', 'retry:yes': 'Қайталау', 'new:yes': '➕ Жаңа мәтін',
-  'export:menu': '📄 Word / PDF / TXT жүктеу', 'export:docx': '📄 Word жүктеу', 'export:pdf': '📕 PDF жүктеу', 'export:txt': '📝 TXT жүктеу',
+  'export:menu': '📥 Жүктеу', 'export:docx': '📄 Word жүктеу', 'export:pdf': '📕 PDF жүктеу', 'export:txt': '📝 TXT жүктеу',
   'check:open': '✅ Сөз алдындағы тексеру', 'check:fix': '✏️ Деректерді нақтылау',
   'delete:confirm': 'Мәтіндерімді өшіру', 'delete:cancel': 'Бас тарту',
   'staff:open': '👥 Басшылық / қатысушылар', 'staff:all': '👥 Барлығы',
@@ -60,7 +60,7 @@ function personCaption(id, session, store, selected) {
 function label(button, session, store) {
   const callback = String(button.callback_data || ''), [kind, action, value, item] = callback.split(':');
   // These modules author Kazakh labels locally, including user-supplied team/name data.
-  if (['tools', 'ops', 'lock', 'guest', 'rehearsal', 'tournament', 'awards', 'voice'].includes(kind)) return button.text || 'Таңдау';
+  if (['nav', 'tools', 'ops', 'lock', 'guest', 'rehearsal', 'tournament', 'awards', 'voice'].includes(kind)) return button.text || 'Таңдау';
   if (Object.hasOwn(STATIC, callback)) return STATIC[callback];
   if (kind === 'language' || kind === 'translate') return LANGUAGES[action] || 'Тілді таңдау';
   if (kind === 'history') return button.text; // A draft title belongs to the user, not the interface.

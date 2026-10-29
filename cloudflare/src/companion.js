@@ -1,5 +1,6 @@
 import { choose } from './directory.js';
 import { clockLabel, stageDescription, timelineText } from './scenario.js';
+const HOME_BUTTONS = [[{ text: '🏠 Басты мәзір', callback_data: 'nav:home' }]];
 
 const button = (text, callback_data) => ({ text, callback_data });
 const uiChoose = (_session, _ru, kk) => kk;
@@ -60,7 +61,7 @@ export function preflight(session) {
 export function handleCompanion(dialogue, chat, text, callback, command) {
   if (command || !/^(export|sheet|sheetdoc|check):/.test(callback)) return false;
   const store = dialogue.store, session = store.get(chat), s = resultSession(session);
-  if (!s.result) { store.send(chat, uiChoose(s, 'Сначала создайте текст: /new', 'Алдымен мәтін жасаңыз: /new', 'Create a text first: /new')); return true; }
+  if (!s.result) { store.send(chat, uiChoose(s, 'Сначала создайте текст: /new', 'Алдымен «Басты мәзірден» мәтін дайындаңыз.', 'Create a text first: /new'), HOME_BUTTONS); return true; }
   const [kind, action, role] = callback.split(':');
   if (kind === 'check') {
     if (action === 'fix' && session.step !== 'ready') {
@@ -72,7 +73,7 @@ export function handleCompanion(dialogue, chat, text, callback, command) {
     return true;
   }
   if (kind === 'sheet') {
-    if (s.format !== 'script' || !s.script_data?.blocks?.length) { store.send(chat, uiChoose(s, 'Для отдельных листов создайте новый сценарий: /new → Сценарий. Старый текст останется в истории.', 'Жеке парақтар «Сценарий» форматына арналған. /new → Сценарий арқылы жасаңыз. Дайын мәтін тарихта сақталады.', 'Create a new script for separate cue sheets: /new → Script. Your existing text stays in history.')); return true; }
+    if (s.format !== 'script' || !s.script_data?.blocks?.length) { store.send(chat, uiChoose(s, 'Для отдельных листов создайте новый сценарий: /new → Сценарий. Старый текст останется в истории.', 'Жеке парақтар «Сценарий» форматына арналған. «Басты мәзірден» жаңа сценарий дайындаңыз. Дайын мәтін тарихта сақталады.', 'Create a new script for separate cue sheets: /new → Script. Your existing text stays in history.'), HOME_BUTTONS); return true; }
     if (action === 'menu') {
       store.send(chat, uiChoose(s, 'Чей лист подготовить? Файл получаете вы и можете переслать участнику.', 'Кімнің парағын дайындаймыз? Файлды өзіңіз алып, қатысушыға жібере аласыз.', 'Whose cue sheet? You receive the file and can forward it.'), [...Array.from({ length: s.host_count || 2 }, (_, i) => [button(roleTitle(s, `host_${i + 1}`), `sheet:host_${i + 1}`)]), [button(roleTitle(s, 'sound'), 'sheet:sound'), button(roleTitle(s, 'coordinator'), 'sheet:coordinator')]]);
     } else {

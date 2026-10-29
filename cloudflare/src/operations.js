@@ -1,5 +1,6 @@
 import { catalog, selectedPeople, personName, directoryRoleKk } from './directory.js';
 import { programBlocks, validProgram, timeline, timelineText, clockLabel } from './scenario.js';
+const HOME_BUTTONS = [[{ text: '🏠 Басты мәзір', callback_data: 'nav:home' }]];
 
 const MAX_LOCKS = 8, LOCK_CHARS = 1500, TTL = 15 * 60 * 1000;
 const btn = (text, callback_data) => ({ text, callback_data });
@@ -10,7 +11,7 @@ const stateFields = ['locked_fragments', 'guest_statuses', 'guest_records', 'eme
 const current = (ui, token, result) => ui && ui.nonce === token && Date.now() - ui.started < TTL && (ui.source_result === undefined || ui.source_result === result);
 
 export class OperationsConflict extends Error {
-  constructor(message = 'Бекітілген мәтінге қайшылық бар. Түзету қолданылмады; бұрынғы мәтін сақталды. /locks арқылы бекітілген бөлікті тексеріңіз.') { super(message); }
+  constructor(message = 'Бекітілген мәтінге қайшылық бар. Түзету қолданылмады; бұрынғы мәтін сақталды. «Бекітілген мәтін» бөліміндегі үзіндіні тексеріңіз.') { super(message); }
 }
 function cleanUi(session) {
   const next = { ...session };
@@ -35,8 +36,8 @@ function persistMetadata(store, chat, session) {
   }
   return next;
 }
-function readyMessage(store, chat) { store.send(chat, 'Алдымен дайын мәтін жасаңыз немесе ағымдағы баптауды аяқтаңыз: /new'); }
-function stale(store, chat) { store.send(chat, 'Бұл батырма ескірді. /emergency, /locks не /guests арқылы бөлімді қайта ашыңыз.'); }
+function readyMessage(store, chat) { store.send(chat, 'Алдымен мәтін дайындаңыз немесе ағымдағы баптауды аяқтаңыз. Қажетті әрекетті «Басты мәзірден» таңдаңыз.', HOME_BUTTONS); }
+function stale(store, chat) { store.send(chat, 'Бұл батырма ескірді. Қажетті бөлімді «Басты мәзірден» қайта ашыңыз.', HOME_BUTTONS); }
 
 export function filterAbsentGuests(session) {
   const absent = new Set(Object.entries(session.guest_statuses || {}).filter(([, value]) => value === 'absent').map(([id]) => id));
@@ -74,7 +75,7 @@ function attendanceLockConflict(session) {
   const completed = session.emergency_state?.completed || 0, program = programBlocks(session);
   for (const lock of session.locked_fragments || []) {
     if (lock.kind === 'script' && program.findIndex(block => block.id === lock.block_id) < completed) continue;
-    if (mentionsAbsent(lock.text, session)) throw new OperationsConflict('Келмейтін қонақ бекітілген мәтінде аталған. Алдымен /locks арқылы осы үзіндінің құлпын алыңыз, содан кейін қонақ мәртебесін қолданыңыз.');
+    if (mentionsAbsent(lock.text, session)) throw new OperationsConflict('Келмейтін қонақ бекітілген мәтінде аталған. Алдымен «Бекітілген мәтін» бөлімінде осы үзіндінің құлпын алыңыз, содан кейін қонақ мәртебесін қолданыңыз.');
   }
 }
 export function finalizeOperationsResult(session, text) {
@@ -99,7 +100,7 @@ export function finalizeOperationsResult(session, text) {
     }
     for (const lock of locks.filter(lock => lock.kind === 'script')) {
       const index = program.findIndex(block => block.id === lock.block_id), block = blocks[index];
-      if (!block || !Object.hasOwn(block.lines || {}, lock.host)) throw new OperationsConflict('Бекітілген репликаның бөлімі не жүргізушісі жаңа бағдарламада жоқ. /locks арқылы құлпын алып, қайта өзгертіңіз.');
+      if (!block || !Object.hasOwn(block.lines || {}, lock.host)) throw new OperationsConflict('Бекітілген репликаның бөлімі не жүргізушісі жаңа бағдарламада жоқ. «Бекітілген мәтін» бөлімінде құлпын алып, қайта өзгертіңіз.');
       if (block.lines[lock.host] !== lock.text) { block.lines[lock.host] = lock.text; restored++; changed = true; }
     }
     if (emergency?.no_music) {
@@ -147,7 +148,7 @@ function lockHandler(dialogue, chat, text, callback, command) {
   if (action === 'add' && session.step === 'lock_menu') {
     if ((session.locked_fragments || []).length >= MAX_LOCKS) { listLocks(store, chat, session); return true; }
     if (session.format === 'script') {
-      if (!session.script_data?.blocks?.length) { store.send(chat, 'Бұл ескі сценарийде бөлек реплика дерегі жоқ. Жаңа сценарий жасаңыз: /new'); return true; }
+      if (!session.script_data?.blocks?.length) { store.send(chat, 'Бұл ескі сценарийде бөлек реплика дерегі жоқ. «Басты мәзірден» жаңа сценарий дайындаңыз.', HOME_BUTTONS); return true; }
       store.put(chat, { ...session, step: 'lock_block' });
       store.send(chat, 'Қай бөлімдегі репликаны бекітеміз?', session.script_data.blocks.map((block, i) => [btn(`${i + 1}. ${block.title.slice(0, 40)}`, `lock:block:${token}:${i}`)]));
     } else { store.put(chat, { ...session, step: 'lock_text' }); store.send(chat, 'Дайын мәтіннен бекітетін үзіндіні дәл көшіріп жіберіңіз. 1500 таңбаға дейін; үзінді дайын мәтінде болуы керек.'); }
@@ -195,7 +196,7 @@ function showGuests(store, chat, session, page = 0) {
   if (session.result) rows.push([btn('✅ Мәтінге қолдану', `guest:apply:${ui.nonce}`)]);
   rows.push([btn('⬅️ Қайту', `guest:close:${ui.nonce}`)]);
   const marked = all.filter(person => session.guest_statuses?.[person.id]).map(person => `${person.nameKk || person.name} — ${statuses[session.guest_statuses[person.id]]}`).join('\n');
-  store.send(chat, 'ҚОНАҚТАР МӘРТЕБЕСІ\n\n' + (marked || 'Қонақты таңдап, қатысу мәртебесін қолмен белгілеңіз.') + '\n\nБұл белгі ұйымдастырушының дерегі ретінде сақталады. Қонақтарға хабарлама жіберілмейді. Мәртебе адамды сценарийге автоматты қоспайды; мәтін қатысушыларын /people арқылы таңдаңыз.', rows);
+  store.send(chat, 'ҚОНАҚТАР МӘРТЕБЕСІ\n\n' + (marked || 'Қонақты таңдап, қатысу мәртебесін қолмен белгілеңіз.') + '\n\nБұл белгі ұйымдастырушының дерегі ретінде сақталады. Қонақтарға хабарлама жіберілмейді. Мәртебе адамды сценарийге автоматты қоспайды; оны мәтінге қосу үшін қатысушылар бөлімінен таңдаңыз.', rows);
 }
 function guestHandler(dialogue, chat, text, callback, command) {
   const store = dialogue.store, session = store.get(chat), [, action, token, value] = callback.split(':');
@@ -204,7 +205,7 @@ function guestHandler(dialogue, chat, text, callback, command) {
     store.cancel(chat); showGuests(store, chat, session); return true;
   }
   if (!callback.startsWith('guest:')) {
-    if (session.step?.startsWith('guest_') && !command && !callback) { store.send(chat, 'Мәртебені жоғарыдағы батырмалармен таңдаңыз. Шығу: /cancel'); return true; }
+    if (session.step?.startsWith('guest_') && !command && !callback) { store.send(chat, 'Мәртебені жоғарыдағы батырмалармен таңдаңыз. Басқа әрекет үшін «Басты мәзір» ашыңыз.', HOME_BUTTONS); return true; }
     return false;
   }
   if (!current(session.guest_ui, token)) { stale(store, chat); return true; }
@@ -269,7 +270,7 @@ export function emergencyProposal(session, { completed = 0, kind, detail = '', g
       if (matching.length > 1) throw new OperationsConflict('Бірнеше қонақ сәйкес келді. Келмейтін адамды тізімнен батырмамен таңдаңыз.');
       person = matching[0];
     }
-    if (guest_id && !person) throw new OperationsConflict('Қонақ тізімнен табылмады. /guests арқылы тексеріңіз.');
+    if (guest_id && !person) throw new OperationsConflict('Қонақ тізімнен табылмады. «Қонақтар мәртебесі» бөлімінде тізімді тексеріңіз.');
     if (!person) {
       const parts = note.split(';').map(value => value.trim());
       if (parts.length !== 2 || !/^[\p{L}][\p{L} ’'.-]{1,119}$/u.test(parts[0]) || !parts[1] || parts[1].length > 200) throw new OperationsConflict('Тізімдегі қонақты батырмамен таңдаңыз. Басқа қонақ үшін «Аты Жөні; лауазымы» үлгісін қолданыңыз.');
@@ -281,7 +282,7 @@ export function emergencyProposal(session, { completed = 0, kind, detail = '', g
   }
   else if (kind !== 'custom' || !note) throw new OperationsConflict('Не өзгергенін жазыңыз.');
   if (!validProgram(nextBlocks)) throw new OperationsConflict('Жаңа бағдарлама 15–480 минут және 1–16 бөлім шегіне сыймайды. Өзгеріс қолданылмады.');
-  for (const lock of session.locked_fragments || []) if (lock.kind === 'script' && !nextBlocks.some(block => block.id === lock.block_id)) throw new OperationsConflict('Бекітілген репликаның бөлімі жойылады. Алдымен /locks арқылы құлпын алыңыз.');
+  for (const lock of session.locked_fragments || []) if (lock.kind === 'script' && !nextBlocks.some(block => block.id === lock.block_id)) throw new OperationsConflict('Бекітілген репликаның бөлімі жойылады. Алдымен «Бекітілген мәтін» бөлімінде құлпын алыңыз.');
   return { ...session, program_blocks: nextBlocks, event_minutes: nextBlocks.reduce((sum, block) => sum + block.minutes, 0), guest_statuses: statusesNext, guest_records: guestRecords,
     emergency_state: { version: 1, completed, completed_blocks: clone(previous.slice(0, completed)), kind, detail: note, no_music: kind === 'music' || !!session.emergency_state?.no_music, created: Date.now() } };
 }
@@ -308,7 +309,7 @@ function previewEmergency(store, chat, session, options) {
 function emergencyHandler(dialogue, chat, text, callback, command) {
   const store = dialogue.store, session = store.get(chat), [, action, token, value] = callback.split(':');
   if (command === '/emergency' || callback === 'ops:open') {
-    if (session.step !== 'ready' && !session.step?.startsWith('ops_') || session.format !== 'script' || !session.script_data?.blocks?.length) { store.send(chat, 'Жедел өзгеріс үшін дайын сценарий керек. /new → Сценарий арқылы дайындаңыз.'); return true; }
+    if (session.step !== 'ready' && !session.step?.startsWith('ops_') || session.format !== 'script' || !session.script_data?.blocks?.length) { store.send(chat, 'Жедел өзгеріс үшін дайын сценарий керек. «Басты мәзірден» жаңа сценарий дайындаңыз.', HOME_BUTTONS); return true; }
     store.cancel(chat); showEmergency(store, chat, session); return true;
   }
   if (!callback.startsWith('ops:') && !(session.step?.startsWith('ops_') && !callback && !command)) return false;
